@@ -59,6 +59,8 @@ type S3 struct {
 }
 
 type AzureBlob struct {
+	ConnectionString string
+	ContainerName    string
 }
 
 type Local struct {

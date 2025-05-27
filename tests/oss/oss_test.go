@@ -43,6 +43,15 @@ var allCases = []testArgsCases{
 		},
 		skip: true,
 	},
+	{
+		vendor: "azure",
+		args: oss.OSSArgs{
+			AzureBlob: &oss.AzureBlob{
+				ConnectionString: os.Getenv("AZURE_CONNECTION"),
+				ContainerName:    os.Getenv("AZURE_CONTAINER"),
+			},
+		},
+	},
 }
 
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
