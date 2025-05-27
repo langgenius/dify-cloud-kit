@@ -40,12 +40,15 @@ type OSS interface {
 	// Type returns the type of the storage
 	// For example: local, aws_s3, tencent_cos
 	Type() string
+
+	//Validate() error
 }
 
 type OSSArgs struct {
 	S3        *S3
 	Local     *Local
 	AzureBlob *AzureBlob
+	AliyunOSS *AliyunOSS
 }
 
 type S3 struct {
@@ -65,4 +68,14 @@ type AzureBlob struct {
 
 type Local struct {
 	Path string
+}
+
+type AliyunOSS struct {
+	Region      string
+	Endpoint    string
+	AccessKey   string
+	SecretKey   string
+	AuthVersion string
+	Path        string
+	Bucket      string
 }

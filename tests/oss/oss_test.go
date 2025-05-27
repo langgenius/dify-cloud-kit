@@ -51,6 +51,21 @@ var allCases = []testArgsCases{
 				ContainerName:    os.Getenv("AZURE_CONTAINER"),
 			},
 		},
+		skip: true,
+	},
+	{
+		vendor: "aliyun",
+		args: oss.OSSArgs{
+			AliyunOSS: &oss.AliyunOSS{
+				Region:      os.Getenv("ALIYUN_OSS_REGION"),
+				Endpoint:    os.Getenv("ALIYUN_OSS_ENDPOINT"),
+				AccessKey:   os.Getenv("ALIYUN_OSS_ACCESS_KEY"),
+				SecretKey:   os.Getenv("ALIYUN_OSS_SECRET_KEY"),
+				AuthVersion: os.Getenv("ALIYUN_OSS_AUTH_VERSION"),
+				Path:        os.Getenv("ALIYUN_OSS_PATH"),
+				Bucket:      os.Getenv("ALIYUN_OSS_BUCKET"),
+			},
+		},
 	},
 }
 
