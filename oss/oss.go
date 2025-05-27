@@ -45,10 +45,11 @@ type OSS interface {
 }
 
 type OSSArgs struct {
-	S3        *S3
-	Local     *Local
-	AzureBlob *AzureBlob
-	AliyunOSS *AliyunOSS
+	S3         *S3
+	Local      *Local
+	AzureBlob  *AzureBlob
+	AliyunOSS  *AliyunOSS
+	TencentCOS *TencentCOS
 }
 
 type S3 struct {
@@ -78,4 +79,11 @@ type AliyunOSS struct {
 	AuthVersion string
 	Path        string
 	Bucket      string
+}
+
+type TencentCOS struct {
+	Region    string
+	SecretID  string
+	SecretKey string
+	Bucket    string
 }

@@ -66,6 +66,18 @@ var allCases = []testArgsCases{
 				Bucket:      os.Getenv("ALIYUN_OSS_BUCKET"),
 			},
 		},
+		skip: true,
+	},
+	{
+		vendor: "tencent",
+		args: oss.OSSArgs{
+			TencentCOS: &oss.TencentCOS{
+				Region:    os.Getenv("TENCNET_COS_REGION"),
+				SecretID:  os.Getenv("TENCNET_COS_SECRET_ID"),
+				SecretKey: os.Getenv("TENCNET_COS_SECRET_KEY"),
+				Bucket:    os.Getenv("TENCNET_COS_BUCKET"),
+			},
+		},
 	},
 }
 
