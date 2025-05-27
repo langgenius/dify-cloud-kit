@@ -3,6 +3,7 @@ package s3
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/langgenius/dify-cloud-kit/oss"
 )
 
@@ -83,14 +85,16 @@ func NewS3Storage(args oss.OSSArgs) (oss.OSS, error) {
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
-		_, err = client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
-			Bucket: aws.String(bucket),
-		})
-		if err != nil {
-			return nil, err
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
+			_, err = client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+				Bucket: aws.String(bucket),
+			})
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
-
 	return &S3Storage{bucket: bucket, client: client}, nil
 }
 

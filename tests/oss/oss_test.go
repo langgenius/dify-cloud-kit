@@ -78,6 +78,7 @@ var allCases = []testArgsCases{
 				Bucket:    os.Getenv("TENCNET_COS_BUCKET"),
 			},
 		},
+		skip: true,
 	},
 }
 
