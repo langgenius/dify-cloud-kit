@@ -27,7 +27,7 @@ func NewS3Storage(args oss.OSSArgs) (oss.OSS, error) {
 	endpoint := args.S3.Endpoint
 	usePathStyle := args.S3.UsePathStyle
 	bucket := args.S3.Bucket
-	// func NewS3Storage(useAws bool, endpoint string, usePathStyle bool, ak string, sk string, bucket string, region string) (oss.OSS, error) {
+
 	var cfg aws.Config
 	var err error
 	var client *s3.Client

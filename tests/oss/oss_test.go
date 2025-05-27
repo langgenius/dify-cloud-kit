@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"testing"
 	"time"
 
@@ -11,12 +13,35 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var ossArgs = oss.OSSArgs{
-	Local: &oss.Local{
-		Path: "/tmp/dify-oss-tests",
+type testArgsCases struct {
+	vendor string
+	args   oss.OSSArgs
+	skip   bool
+}
+
+var allCases = []testArgsCases{
+	{
+		vendor: "local",
+		args: oss.OSSArgs{
+			Local: &oss.Local{
+				Path: "/tmp/dify-oss-tests",
+			},
+		},
+		skip: true,
 	},
-	S3: &oss.S3{
-		UseAws: true,
+	{
+		vendor: "s3",
+		args: oss.OSSArgs{
+			S3: &oss.S3{
+				UseAws:       true,
+				UsePathStyle: true,
+				AccessKey:    os.Getenv("AWS_S3_ACCESS_KEY"),
+				SecretKey:    os.Getenv("AWS_S3_SECRET_KEY"),
+				Bucket:       os.Getenv("AWS_S3_BUCKET"),
+				Region:       os.Getenv("AWS_S3_REGION"),
+			},
+		},
+		skip: true,
 	},
 }
 
@@ -32,22 +57,23 @@ func randomString(length int) string {
 }
 
 func TestAll(t *testing.T) {
-	vendors := []string{
-		"local",
-	}
-	key := randomString(10)
+	prefix := randomString(5)
+	key := fmt.Sprintf("%s/%s", prefix, randomString(10))
 
 	size := 1 * 1024 * 1024
 	data := make([]byte, size)
 
-	for _, vendor := range vendors {
-		storage, err := factory.Load(vendor, ossArgs)
+	for _, c := range allCases {
+		if c.skip {
+			continue
+		}
+		storage, err := factory.Load(c.vendor, c.args)
 		if err != nil {
 			log.Fatal(err)
 			continue
 		}
 
-		ossPaths, err := storage.List("/")
+		ossPaths, err := storage.List(prefix)
 		assert.Equal(t, 0, len(ossPaths))
 		assert.Nil(t, err)
 
@@ -70,7 +96,7 @@ func TestAll(t *testing.T) {
 		assert.Equal(t, true, exist)
 		assert.Nil(t, err)
 
-		ossPaths, err = storage.List("/")
+		ossPaths, err = storage.List(prefix)
 		assert.Equal(t, 1, len(ossPaths))
 		assert.Nil(t, err)
 
@@ -81,7 +107,7 @@ func TestAll(t *testing.T) {
 		assert.Equal(t, false, exist)
 		assert.Nil(t, err)
 
-		ossPaths, err = storage.List("/")
+		ossPaths, err = storage.List(prefix)
 		assert.Equal(t, 0, len(ossPaths))
 		assert.Nil(t, err)
 	}
