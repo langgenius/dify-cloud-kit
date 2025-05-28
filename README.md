@@ -84,7 +84,6 @@ export OSS_ALIYUN_ACCESS_KEY=your-access-key
 export OSS_ALIYUN_SECRET_KEY=your-secret-key
 export OSS_ALIYUN_BUCKET=test-bucket
 
-# Add similar vars for Azure, GCS, COS, OBS as needed.
 ```
 
 ### Run Tests
@@ -98,7 +97,7 @@ go test ./...
 This project is licensed under the [Apache 2.0 License](LICENSE).
 
 ## NOTICE
-Some parts of the code in this project originate from [dify-plugin-daemon](https://github.com/langgenius/dify-plugin-daemon), specifically:
+Some parts of the code in this project originate from [dify-plugin-daemon](https://github.com/langgenius/dify-plugin-daemon)
 
 |Provider | Author | PR |
 |---|---|---|
