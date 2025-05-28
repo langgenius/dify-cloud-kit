@@ -41,7 +41,7 @@ var allCases = []testArgsCases{
 				Region:       os.Getenv("AWS_S3_REGION"),
 			},
 		},
-		skip: true,
+		skip: false,
 	},
 	{
 		vendor: "azure",
@@ -51,7 +51,7 @@ var allCases = []testArgsCases{
 				ContainerName:    os.Getenv("AZURE_CONTAINER"),
 			},
 		},
-		skip: true,
+		skip: false,
 	},
 	{
 		vendor: "aliyun",
@@ -66,7 +66,7 @@ var allCases = []testArgsCases{
 				Bucket:      os.Getenv("ALIYUN_OSS_BUCKET"),
 			},
 		},
-		skip: true,
+		skip: false,
 	},
 	{
 		vendor: "tencent",
@@ -78,7 +78,7 @@ var allCases = []testArgsCases{
 				Bucket:    os.Getenv("TENCNET_COS_BUCKET"),
 			},
 		},
-		skip: true,
+		skip: false,
 	},
 	{
 		vendor: "gcs",
@@ -88,7 +88,7 @@ var allCases = []testArgsCases{
 				CredentialsB64: os.Getenv("GCS_CREDENTIALS"),
 			},
 		},
-		skip: true,
+		skip: false,
 	},
 	{
 		vendor: "huawei",
@@ -100,7 +100,7 @@ var allCases = []testArgsCases{
 				Server:    os.Getenv("HUAWEI_OBS_SERVER"),
 			},
 		},
-		skip: true,
+		skip: false,
 	},
 }
 
@@ -131,42 +131,43 @@ func TestAll(t *testing.T) {
 			log.Fatal(err)
 			continue
 		}
+		info := fmt.Sprintf("vendor: %s", c.vendor)
 		ossPaths, err := storage.List(prefix)
-		assert.Equal(t, 0, len(ossPaths))
-		assert.Nil(t, err)
+		assert.Equal(t, 0, len(ossPaths), info)
+		assert.Nil(t, err, info)
 
 		exist, err := storage.Exists(key)
-		assert.Equal(t, false, exist)
-		assert.Nil(t, err)
+		assert.Equal(t, false, exist, info)
+		assert.Nil(t, err, info)
 
 		err = storage.Save(key, data)
-		assert.Nil(t, err)
+		assert.Nil(t, err, info)
 
 		rdata, err := storage.Load(key)
-		assert.Equal(t, data, rdata)
-		assert.Nil(t, err)
+		assert.Equal(t, data, rdata, info)
+		assert.Nil(t, err, info)
 
 		ossState, err := storage.State(key)
-		assert.Equal(t, int64(size), ossState.Size)
-		assert.Nil(t, err)
+		assert.Equal(t, int64(size), ossState.Size, info)
+		assert.Nil(t, err, info)
 
 		exist, err = storage.Exists(key)
-		assert.Equal(t, true, exist)
-		assert.Nil(t, err)
+		assert.Equal(t, true, exist, info)
+		assert.Nil(t, err, info)
 
 		ossPaths, err = storage.List(prefix)
-		assert.Equal(t, 1, len(ossPaths))
-		assert.Nil(t, err)
+		assert.Equal(t, 1, len(ossPaths), info)
+		assert.Nil(t, err, info)
 
 		err = storage.Delete(key)
-		assert.Nil(t, err)
+		assert.Nil(t, err, info)
 
 		exist, err = storage.Exists(key)
-		assert.Equal(t, false, exist)
-		assert.Nil(t, err)
+		assert.Equal(t, false, exist, info)
+		assert.Nil(t, err, info)
 
 		ossPaths, err = storage.List(prefix)
-		assert.Equal(t, 0, len(ossPaths))
-		assert.Nil(t, err)
+		assert.Equal(t, 0, len(ossPaths), info)
+		assert.Nil(t, err, info)
 	}
 }
