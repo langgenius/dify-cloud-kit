@@ -80,6 +80,15 @@ var allCases = []testArgsCases{
 		},
 		skip: true,
 	},
+	{
+		vendor: "gcs",
+		args: oss.OSSArgs{
+			GoogleCloudStorage: &oss.GoogleCloudStorage{
+				Bucket:         os.Getenv("GCS_BUCKET"),
+				CredentialsB64: os.Getenv("GCS_CREDENTIALS"),
+			},
+		},
+	},
 }
 
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

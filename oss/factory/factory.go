@@ -4,6 +4,7 @@ import (
 	"github.com/langgenius/dify-cloud-kit/oss"
 	"github.com/langgenius/dify-cloud-kit/oss/aliyun"
 	"github.com/langgenius/dify-cloud-kit/oss/azureblob"
+	"github.com/langgenius/dify-cloud-kit/oss/gcsblob"
 	"github.com/langgenius/dify-cloud-kit/oss/local"
 	"github.com/langgenius/dify-cloud-kit/oss/s3"
 	"github.com/langgenius/dify-cloud-kit/oss/tencentcos"
@@ -26,6 +27,9 @@ var OSSFactory = map[string]func(oss.OSSArgs) (oss.OSS, error){
 	"tencent":     tencentcos.NewTencentCOSStorage,
 	"tencent_cos": tencentcos.NewTencentCOSStorage,
 	"tencent-cos": tencentcos.NewTencentCOSStorage,
+
+	"gcs":            gcsblob.NewGoogleCloudStorage,
+	"google-storage": gcsblob.NewGoogleCloudStorage,
 }
 
 func Load(name string, args oss.OSSArgs) (oss.OSS, error) {

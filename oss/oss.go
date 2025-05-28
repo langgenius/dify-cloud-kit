@@ -45,11 +45,12 @@ type OSS interface {
 }
 
 type OSSArgs struct {
-	S3         *S3
-	Local      *Local
-	AzureBlob  *AzureBlob
-	AliyunOSS  *AliyunOSS
-	TencentCOS *TencentCOS
+	S3                 *S3
+	Local              *Local
+	AzureBlob          *AzureBlob
+	AliyunOSS          *AliyunOSS
+	TencentCOS         *TencentCOS
+	GoogleCloudStorage *GoogleCloudStorage
 }
 
 type S3 struct {
@@ -86,4 +87,9 @@ type TencentCOS struct {
 	SecretID  string
 	SecretKey string
 	Bucket    string
+}
+
+type GoogleCloudStorage struct {
+	Bucket         string
+	CredentialsB64 string
 }
