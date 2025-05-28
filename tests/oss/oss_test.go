@@ -88,6 +88,19 @@ var allCases = []testArgsCases{
 				CredentialsB64: os.Getenv("GCS_CREDENTIALS"),
 			},
 		},
+		skip: true,
+	},
+	{
+		vendor: "huawei",
+		args: oss.OSSArgs{
+			HuaweiOBS: &oss.HuaweiOBS{
+				Bucket:    os.Getenv("HUAWEI_OBS_BUCKET"),
+				AccessKey: os.Getenv("HUAWEI_OBS_ACCESS_KEY"),
+				SecretKey: os.Getenv("HUAWEI_OBS_SECRET_KEY"),
+				Server:    os.Getenv("HUAWEI_OBS_SERVER"),
+			},
+		},
+		skip: true,
 	},
 }
 
@@ -118,7 +131,6 @@ func TestAll(t *testing.T) {
 			log.Fatal(err)
 			continue
 		}
-
 		ossPaths, err := storage.List(prefix)
 		assert.Equal(t, 0, len(ossPaths))
 		assert.Nil(t, err)

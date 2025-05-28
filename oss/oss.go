@@ -12,6 +12,7 @@ const (
 	OSS_TYPE_AZURE_BLOB  = "azure_blob"
 	OSS_TYPE_GCS         = "gcs"
 	OSS_TYPE_ALIYUN_OSS  = "aliyun_oss"
+	OSS_TYPE_HUAWEI_OBS  = "huawei_obs"
 )
 
 type OSSState struct {
@@ -51,6 +52,7 @@ type OSSArgs struct {
 	AliyunOSS          *AliyunOSS
 	TencentCOS         *TencentCOS
 	GoogleCloudStorage *GoogleCloudStorage
+	HuaweiOBS          *HuaweiOBS
 }
 
 type S3 struct {
@@ -92,4 +94,11 @@ type TencentCOS struct {
 type GoogleCloudStorage struct {
 	Bucket         string
 	CredentialsB64 string
+}
+
+type HuaweiOBS struct {
+	Bucket    string
+	AccessKey string
+	SecretKey string
+	Server    string
 }
