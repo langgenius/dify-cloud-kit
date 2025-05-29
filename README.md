@@ -40,16 +40,16 @@ func main() {
 
 ## 📁 Supported Storage Providers
 
-| Provider       | Module Path                | Required Fields                                           |
-|----------------|----------------------------|-----------------------------------------------------------|
-| Local          | `oss/local/localfile.go`   | `Path`                                                    |
-| Aliyun OSS     | `oss/aliyun/aliyun.go`     | `Endpoint`, `AccessKey`, `SecretKey`, `Bucket`            |
-| AWS S3         | `oss/s3/s3.go`             | `Region`, `AccessKey`, `SecretKey`, `Bucket`              |
-| Azure Blob     | `oss/azureblob/blob.go`    | `AccountName`, `AccountKey`, `Container`                  |
-| Google GCS     | `oss/gcsblob/gcs.go`       | `CredentialsJSON`, `Bucket`                               |
-| Tencent COS    | `oss/tencentcos/cos.go`    | `SecretId`, `SecretKey`, `Bucket`, `Region`               |
-| Huawei OBS     | `oss/huanweiobs/obs.go`    | `AK`, `SK`, `Endpoint`, `Bucket`                          |
-| Volcengine TOS | `oss/volcenginetos/tos.go` | `Endpoint`, `Region` , `AccessKey`, `SecretKey`, `Bucket` |
+| Provider       | Module Path                | Required Fields                                 |
+|----------------|----------------------------|-------------------------------------------------|
+| Local          | `oss/local/localfile.go`   | `Path`                                          |
+| Aliyun OSS     | `oss/aliyun/aliyun.go`     | `Endpoint`, `AccessKey`, `SecretKey`, `Bucket`  |
+| AWS S3         | `oss/s3/s3.go`             | `Region`, `AccessKey`, `SecretKey`, `Bucket`    |
+| Azure Blob     | `oss/azureblob/blob.go`    | `AccountName`, `AccountKey`, `Container`        |
+| Google GCS     | `oss/gcsblob/gcs.go`       | `CredentialsJSON`, `Bucket`                     |
+| Tencent COS    | `oss/tencentcos/cos.go`    | `SecretId`, `SecretKey`, `Bucket`, `Region`     |
+| Huawei OBS     | `oss/huanweiobs/obs.go`    | `AK`, `SK`, `Endpoint`, `Bucket`                |
+| Volcengine TOS | `oss/volcenginetos/tos.go` | `Endpoint`,  `AccessKey`, `SecretKey`, `Bucket` |
 
 ## 🏗️ Usage with Factory
 
