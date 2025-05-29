@@ -11,6 +11,7 @@ import (
 	"github.com/langgenius/dify-cloud-kit/oss/local"
 	"github.com/langgenius/dify-cloud-kit/oss/s3"
 	"github.com/langgenius/dify-cloud-kit/oss/tencentcos"
+	"github.com/langgenius/dify-cloud-kit/oss/volcenginetos"
 )
 
 var OSSFactory = map[string]func(oss.OSSArgs) (oss.OSS, error){
@@ -37,6 +38,10 @@ var OSSFactory = map[string]func(oss.OSSArgs) (oss.OSS, error){
 	"huawei":     huanweiobs.NewHuaweiOBSStorage,
 	"huawei-obs": huanweiobs.NewHuaweiOBSStorage,
 	"huawei_obs": huanweiobs.NewHuaweiOBSStorage,
+
+	"volcengine":     volcenginetos.NewVolcengineTOSStorage,
+	"volcengine_tos": volcenginetos.NewVolcengineTOSStorage,
+	"volcengine-tos": volcenginetos.NewVolcengineTOSStorage,
 }
 
 func Load(name string, args oss.OSSArgs) (oss.OSS, error) {

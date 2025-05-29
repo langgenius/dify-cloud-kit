@@ -102,6 +102,19 @@ var allCases = []testArgsCases{
 		},
 		skip: false,
 	},
+	{
+		vendor: "volcengine",
+		args: oss.OSSArgs{
+			VolcengineTOS: &oss.VolcengineTOS{
+				Region:    os.Getenv("VOLCENGINE_TOS_REGION"),
+				Endpoint:  os.Getenv("VOLCENGINE_TOS_ENDPOINT"),
+				AccessKey: os.Getenv("VOLCENGINE_TOS_ACCESS_KEY"),
+				SecretKey: os.Getenv("VOLCENGINE_TOS_SECRET_KEY"),
+				Bucket:    os.Getenv("VOLCENGINE_TOS_BUCKET"),
+			},
+		},
+		skip: false,
+	},
 }
 
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

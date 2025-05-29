@@ -9,13 +9,14 @@ import (
 // such as local file system, AWS S3, and Tencent COS.
 // The interface defines methods for saving, loading, checking existence,
 const (
-	OSS_TYPE_LOCAL       = "local"
-	OSS_TYPE_S3          = "aws_s3"
-	OSS_TYPE_TENCENT_COS = "tencent_cos"
-	OSS_TYPE_AZURE_BLOB  = "azure_blob"
-	OSS_TYPE_GCS         = "gcs"
-	OSS_TYPE_ALIYUN_OSS  = "aliyun_oss"
-	OSS_TYPE_HUAWEI_OBS  = "huawei_obs"
+	OSS_TYPE_LOCAL          = "local"
+	OSS_TYPE_S3             = "aws_s3"
+	OSS_TYPE_TENCENT_COS    = "tencent_cos"
+	OSS_TYPE_AZURE_BLOB     = "azure_blob"
+	OSS_TYPE_GCS            = "gcs"
+	OSS_TYPE_ALIYUN_OSS     = "aliyun_oss"
+	OSS_TYPE_HUAWEI_OBS     = "huawei_obs"
+	OSS_TYPE_VOLCENGINE_TOS = "volcengine_tos"
 )
 
 type OSSState struct {
@@ -54,6 +55,7 @@ type OSSArgs struct {
 	TencentCOS         *TencentCOS
 	GoogleCloudStorage *GoogleCloudStorage
 	HuaweiOBS          *HuaweiOBS
+	VolcengineTOS      *VolcengineTOS
 }
 
 type S3 struct {
@@ -154,6 +156,22 @@ type HuaweiOBS struct {
 func (h *HuaweiOBS) Validate() error {
 	if h.Bucket == "" || h.AccessKey == "" || h.SecretKey == "" || h.Server == "" {
 		msg := fmt.Sprintf("bucket, accesskKey, secretKey, server cannot be empty.")
+		return ErrArgumentInvalid.WithDetail(msg)
+	}
+	return nil
+}
+
+type VolcengineTOS struct {
+	Region    string
+	Endpoint  string
+	AccessKey string
+	SecretKey string
+	Bucket    string
+}
+
+func (t *VolcengineTOS) Validate() error {
+	if t.Bucket == "" || t.Endpoint == "" || t.AccessKey == "" || t.SecretKey == "" {
+		msg := fmt.Sprintf("bucket, endpoint,accessKey, secretKey cannot be empty.")
 		return ErrArgumentInvalid.WithDetail(msg)
 	}
 	return nil

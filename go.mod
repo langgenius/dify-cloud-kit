@@ -11,8 +11,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.67
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.4
 	github.com/aws/smithy-go v1.22.2
+	github.com/huaweicloud/huaweicloud-sdk-go-obs v3.25.4+incompatible
 	github.com/stretchr/testify v1.10.0
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.65
+	github.com/volcengine/ve-tos-golang-sdk/v2 v2.7.12
+	google.golang.org/api v0.232.0
 )
 
 require (
@@ -56,7 +59,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
-	github.com/huaweicloud/huaweicloud-sdk-go-obs v3.25.4+incompatible // indirect
 	github.com/mitchellh/mapstructure v1.4.3 // indirect
 	github.com/mozillazg/go-httpheader v0.2.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
@@ -79,7 +81,6 @@ require (
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
-	google.golang.org/api v0.232.0 // indirect
 	google.golang.org/genproto v0.0.0-20250303144028-a0af3efb3deb // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250505200425-f936aa4a68b2 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250505200425-f936aa4a68b2 // indirect
