@@ -40,15 +40,16 @@ func main() {
 
 ## 📁 Supported Storage Providers
 
-| Provider     | Module Path                  | Required Fields |
-|--------------|------------------------------|-----------------|
-| Local        | `oss/local/localfile.go`     | `Path`          |
-| Aliyun OSS   | `oss/aliyun/aliyun.go`       | `Endpoint`, `AccessKey`, `SecretKey`, `Bucket` |
-| AWS S3       | `oss/s3/s3.go`               | `Region`, `AccessKey`, `SecretKey`, `Bucket` |
-| Azure Blob   | `oss/azureblob/blob.go`      | `AccountName`, `AccountKey`, `Container` |
-| Google GCS   | `oss/gcsblob/gcs.go`         | `CredentialsJSON`, `Bucket` |
-| Tencent COS  | `oss/tencentcos/cos.go`      | `SecretId`, `SecretKey`, `Bucket`, `Region` |
-| Huawei OBS   | `oss/huanweiobs/obs.go`      | `AK`, `SK`, `Endpoint`, `Bucket` |
+| Provider       | Module Path                | Required Fields                                           |
+|----------------|----------------------------|-----------------------------------------------------------|
+| Local          | `oss/local/localfile.go`   | `Path`                                                    |
+| Aliyun OSS     | `oss/aliyun/aliyun.go`     | `Endpoint`, `AccessKey`, `SecretKey`, `Bucket`            |
+| AWS S3         | `oss/s3/s3.go`             | `Region`, `AccessKey`, `SecretKey`, `Bucket`              |
+| Azure Blob     | `oss/azureblob/blob.go`    | `AccountName`, `AccountKey`, `Container`                  |
+| Google GCS     | `oss/gcsblob/gcs.go`       | `CredentialsJSON`, `Bucket`                               |
+| Tencent COS    | `oss/tencentcos/cos.go`    | `SecretId`, `SecretKey`, `Bucket`, `Region`               |
+| Huawei OBS     | `oss/huanweiobs/obs.go`    | `AK`, `SK`, `Endpoint`, `Bucket`                          |
+| Volcengine TOS | `oss/volcenginetos/tos.go` | `Endpoint`, `Region` , `AccessKey`, `SecretKey`, `Bucket` |
 
 ## 🏗️ Usage with Factory
 
@@ -99,11 +100,12 @@ This project is licensed under the [Apache 2.0 License](LICENSE).
 ## NOTICE
 Some parts of the code in this project originate from [dify-plugin-daemon](https://github.com/langgenius/dify-plugin-daemon)
 
-|Provider | Author | PR |
-|---|---|---|
-|Aliyun OSS|[bravomark](https://github.com/bravomark)|https://github.com/langgenius/dify-plugin-daemon/pull/261 |
-|Azure Blob|[techan](https://github.com/te-chan)|https://github.com/langgenius/dify-plugin-daemon/pull/172|
-|Google GCS|[Hironori Yamamoto](https://github.com/hiro-o918)|https://github.com/langgenius/dify-plugin-daemon/pull/237|
-|Local|[lengyhua](https://github.com/lengyhua)|https://github.com/langgenius/dify-plugin-daemon/pull/157|
-|AWS S3|[Yeuoly](https://github.com/Yeuoly)|https://github.com/langgenius/dify-plugin-daemon/commit/9ad9d7d4de1d123956ab07955e541bc4053e5170|
-|Tencent COS|[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-plugin-daemon/pull/97|
+| Provider       | Author | PR |
+|----------------|---|---|
+| Aliyun OSS     |[bravomark](https://github.com/bravomark)|https://github.com/langgenius/dify-plugin-daemon/pull/261 |
+| Azure Blob     |[techan](https://github.com/te-chan)|https://github.com/langgenius/dify-plugin-daemon/pull/172|
+| Google GCS     |[Hironori Yamamoto](https://github.com/hiro-o918)|https://github.com/langgenius/dify-plugin-daemon/pull/237|
+| Local          |[lengyhua](https://github.com/lengyhua)|https://github.com/langgenius/dify-plugin-daemon/pull/157|
+| AWS S3         |[Yeuoly](https://github.com/Yeuoly)|https://github.com/langgenius/dify-plugin-daemon/commit/9ad9d7d4de1d123956ab07955e541bc4053e5170|
+| Tencent COS    |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-plugin-daemon/pull/97|
+| Volcengine TOS |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-cloud-kit/pull/2|
