@@ -3,15 +3,15 @@ package factory
 import (
 	"fmt"
 
-	"github.com/langgenius/dify-cloud-kit/oss"
-	"github.com/langgenius/dify-cloud-kit/oss/aliyun"
-	"github.com/langgenius/dify-cloud-kit/oss/azureblob"
-	"github.com/langgenius/dify-cloud-kit/oss/gcsblob"
-	"github.com/langgenius/dify-cloud-kit/oss/huanweiobs"
-	"github.com/langgenius/dify-cloud-kit/oss/local"
-	"github.com/langgenius/dify-cloud-kit/oss/s3"
-	"github.com/langgenius/dify-cloud-kit/oss/tencentcos"
-	"github.com/langgenius/dify-cloud-kit/oss/volcenginetos"
+	"github.com/xwxsee2014/dify-cloud-kit/oss"
+	"github.com/xwxsee2014/dify-cloud-kit/oss/aliyun"
+	"github.com/xwxsee2014/dify-cloud-kit/oss/azureblob"
+	"github.com/xwxsee2014/dify-cloud-kit/oss/gcsblob"
+	"github.com/xwxsee2014/dify-cloud-kit/oss/huanweiobs"
+	"github.com/xwxsee2014/dify-cloud-kit/oss/local"
+	"github.com/xwxsee2014/dify-cloud-kit/oss/s3"
+	"github.com/xwxsee2014/dify-cloud-kit/oss/tencentcos"
+	"github.com/xwxsee2014/dify-cloud-kit/oss/volcenginetos"
 )
 
 var OSSFactory = map[string]func(oss.OSSArgs) (oss.OSS, error){

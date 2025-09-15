@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
-	"github.com/langgenius/dify-cloud-kit/oss"
+	"github.com/xwxsee2014/dify-cloud-kit/oss"
 )
 
 type S3Storage struct {

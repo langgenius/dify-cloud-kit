@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
-	difyoss "github.com/langgenius/dify-cloud-kit/oss"
+	difyoss "github.com/xwxsee2014/dify-cloud-kit/oss"
 )
 
 type AliyunOSSStorage struct {

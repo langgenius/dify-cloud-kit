@@ -12,15 +12,15 @@ Dify Cloud Kit is a unified abstraction library for integrating various cloud ob
 ## 📦 Installation
 
 ```bash
-go get github.com/langgenius/dify-cloud-kit
+go get github.com/xwxsee2014/dify-cloud-kit
 ```
 
 ## 🚀 Quick Start
 
 ```go
 import (
-    "github.com/langgenius/dify-cloud-kit/oss"
-    "github.com/langgenius/dify-cloud-kit/oss/factory"
+    "github.com/xwxsee2014/dify-cloud-kit/oss"
+    "github.com/xwxsee2014/dify-cloud-kit/oss/factory"
 )
 
 func main() {
@@ -108,4 +108,4 @@ Some parts of the code in this project originate from [dify-plugin-daemon](https
 | Local          |[lengyhua](https://github.com/lengyhua)|https://github.com/langgenius/dify-plugin-daemon/pull/157|
 | AWS S3         |[Yeuoly](https://github.com/Yeuoly)|https://github.com/langgenius/dify-plugin-daemon/commit/9ad9d7d4de1d123956ab07955e541bc4053e5170|
 | Tencent COS    |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-plugin-daemon/pull/97|
-| Volcengine TOS |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-cloud-kit/pull/2|
+| Volcengine TOS |[quicksand](https://github.com/quicksandznzn)|https://github.com/xwxsee2014/dify-cloud-kit/pull/2|

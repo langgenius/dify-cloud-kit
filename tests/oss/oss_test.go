@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/langgenius/dify-cloud-kit/oss"
-	"github.com/langgenius/dify-cloud-kit/oss/factory"
 	"github.com/stretchr/testify/assert"
+	"github.com/xwxsee2014/dify-cloud-kit/oss"
+	"github.com/xwxsee2014/dify-cloud-kit/oss/factory"
 )
 
 type testArgsCases struct {

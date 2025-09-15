@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/langgenius/dify-cloud-kit/oss"
 	"github.com/tencentyun/cos-go-sdk-v5"
+	"github.com/xwxsee2014/dify-cloud-kit/oss"
 )
 
 type TencentCOSStorage struct {

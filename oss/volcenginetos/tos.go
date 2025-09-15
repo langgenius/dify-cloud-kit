@@ -3,10 +3,11 @@ package volcenginetos
 import (
 	"bytes"
 	"context"
-	"github.com/langgenius/dify-cloud-kit/oss"
-	"github.com/volcengine/ve-tos-golang-sdk/v2/tos"
 	"io"
 	"strings"
+
+	"github.com/volcengine/ve-tos-golang-sdk/v2/tos"
+	"github.com/xwxsee2014/dify-cloud-kit/oss"
 )
 
 type VolcengineTOSStorage struct {
