@@ -126,6 +126,7 @@ type TencentCOS struct {
 	SecretID  string
 	SecretKey string
 	Bucket    string
+	Endpoint  string
 }
 
 func (t *TencentCOS) Validate() error {
