@@ -48,7 +48,7 @@ func main() {
 | Azure Blob     | `oss/azureblob/blob.go`    | `AccountName`, `AccountKey`, `Container`        |
 | Google GCS     | `oss/gcsblob/gcs.go`       | `CredentialsJSON`, `Bucket`                     |
 | Tencent COS    | `oss/tencentcos/cos.go`    | `SecretId`, `SecretKey`, `Bucket`, `Region`     |
-| Huawei OBS     | `oss/huanweiobs/obs.go`    | `AK`, `SK`, `Endpoint`, `Bucket`                |
+| Huawei OBS     | `oss/huaweiobs/obs.go`    | `AK`, `SK`, `Endpoint`, `Bucket`                |
 | Volcengine TOS | `oss/volcenginetos/tos.go` | `Endpoint`,  `AccessKey`, `SecretKey`, `Bucket` |
 
 ## 🏗️ Usage with Factory

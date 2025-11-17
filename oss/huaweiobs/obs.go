@@ -1,4 +1,4 @@
-package huanweiobs
+package huaweiobs
 
 import (
 	"io"
@@ -115,30 +115,43 @@ func (h *HuaweiOBSStorage) State(key string) (oss.OSSState, error) {
 }
 
 func (h *HuaweiOBSStorage) List(prefix string) ([]oss.OSSPath, error) {
-	output, err := h.client.ListObjects(&obs.ListObjectsInput{
-		Bucket: h.bucket,
-		ListObjsInput: obs.ListObjsInput{
-			Prefix: prefix,
-		},
-	})
-	if err != nil {
-		return nil, err
+	if !strings.HasSuffix(prefix, "/") {
+		prefix = prefix + "/"
 	}
-	paths := []oss.OSSPath{}
-	for _, v := range output.Contents {
-		key := strings.TrimPrefix(v.Key, prefix)
-		key = strings.TrimPrefix(key, "/")
 
-		if key == "" {
-			continue
-		}
-		paths = append(paths, oss.OSSPath{
-			Path: key,
-			IsDir: func() bool {
-				return strings.HasSuffix(v.Key, "/")
-			}(),
+	marker := ""
+	paths := []oss.OSSPath{}
+	for {
+		output, err := h.client.ListObjects(&obs.ListObjectsInput{
+			Bucket: h.bucket,
+			ListObjsInput: obs.ListObjsInput{
+				Prefix: prefix,
+			},
+			Marker: marker,
 		})
+		if err != nil {
+			return nil, err
+		}
+
+		for _, v := range output.Contents {
+			key := strings.TrimPrefix(v.Key, prefix)
+			key = strings.TrimPrefix(key, "/")
+
+			if key == "" {
+				continue
+			}
+			paths = append(paths, oss.OSSPath{
+				Path:  key,
+				IsDir: false,
+			})
+		}
+		if output.IsTruncated {
+			marker = output.NextMarker
+		} else {
+			break
+		}
 	}
+
 	return paths, nil
 }
 
