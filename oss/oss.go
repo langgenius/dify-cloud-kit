@@ -143,8 +143,8 @@ type GoogleCloudStorage struct {
 }
 
 func (g *GoogleCloudStorage) Validate() error {
-	if g.Bucket == "" || g.CredentialsB64 == "" {
-		msg := fmt.Sprintf("bucket and credentials cannot be empty.")
+	if g.Bucket == "" {
+		msg := fmt.Sprintf("bucket cannot be empty.")
 		return ErrArgumentInvalid.WithDetail(msg)
 	}
 	return nil

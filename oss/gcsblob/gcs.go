@@ -29,13 +29,22 @@ func NewGoogleCloudStorage(args oss.OSSArgs) (oss.OSS, error) {
 	ctx := context.Background()
 	bucket := args.GoogleCloudStorage.Bucket
 	credentialsB64 := args.GoogleCloudStorage.CredentialsB64
-	credentials, err := base64.StdEncoding.DecodeString(credentialsB64)
-	if err != nil {
-		return nil, oss.ErrProviderInit.WithError(err).WithDetail("credentials must be a base64 encoded string")
-	}
-	client, err := storage.NewClient(ctx, option.WithCredentialsJSON(credentials))
-	if err != nil {
-		return nil, oss.ErrProviderInit.WithError(err)
+
+	var client *storage.Client
+	if credentialsB64 == "" {
+		client, err = storage.NewClient(ctx)
+		if err != nil {
+			return nil, oss.ErrProviderInit.WithError(err).WithDetail("failed to initialize GCS client with ADC")
+		}
+	} else {
+		credentials, err := base64.StdEncoding.DecodeString(credentialsB64)
+		if err != nil {
+			return nil, oss.ErrProviderInit.WithError(err).WithDetail("credentials must be a base64 encoded string")
+		}
+		client, err = storage.NewClient(ctx, option.WithCredentialsJSON(credentials))
+		if err != nil {
+			return nil, oss.ErrProviderInit.WithError(err)
+		}
 	}
 	return &GoogleCloudStorage{
 		bucket: bucket,
