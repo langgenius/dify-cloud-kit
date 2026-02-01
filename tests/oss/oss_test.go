@@ -174,6 +174,9 @@ func TestAll(t *testing.T) {
 		ossPaths, err = storage.List(prefix)
 		assert.Equal(t, 1, len(ossPaths), info)
 		assert.Nil(t, err, info)
+		// Verify that List returns relative paths (without prefix)
+		expectedRelativePath := key[len(prefix)+1:] // +1 for the "/" separator
+		assert.Equal(t, expectedRelativePath, ossPaths[0].Path, info+" - List should return relative path")
 
 		err = storage.Delete(key)
 		assert.Nil(t, err, info)

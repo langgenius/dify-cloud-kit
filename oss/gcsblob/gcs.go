@@ -125,7 +125,7 @@ func (g *GoogleCloudStorage) List(prefix string) ([]oss.OSSPath, error) {
 		key = strings.TrimPrefix(key, "/")
 
 		res = append(res, oss.OSSPath{
-			Path:  attrs.Name,
+			Path:  key,
 			IsDir: false,
 		})
 
