@@ -72,21 +72,34 @@ type S3 struct {
 
 func (s *S3) Validate() error {
 	if s.Bucket == "" || s.Region == "" {
-		msg := fmt.Sprintf("bucket and region cannot be empty.")
+		msg := "bucket and region cannot be empty."
 		return ErrArgumentInvalid.WithDetail(msg)
 	}
 	return nil
 }
 
 type AzureBlob struct {
-	ConnectionString string
-	ContainerName    string
+	ConnectionString   string
+	ContainerName      string
+	UseManagedIdentity bool
+	ServiceURL         string
 }
 
 func (a *AzureBlob) Validate() error {
-	if a.ConnectionString == "" || a.ContainerName == "" {
-		msg := fmt.Sprintf("connectorString and containerName cannot be empty.")
+	if a.ContainerName == "" {
+		msg := "containerName cannot be empty"
 		return ErrArgumentInvalid.WithDetail(msg)
+	}
+	if a.UseManagedIdentity {
+		if a.ServiceURL == "" {
+			msg := "service url cannot be empty. e.g. https://<account>.blob.core.windows.net/."
+			return ErrArgumentInvalid.WithDetail(msg)
+		}
+	} else {
+		if a.ConnectionString == "" {
+			msg := "connectorString cannot be empty."
+			return ErrArgumentInvalid.WithDetail(msg)
+		}
 	}
 	return nil
 }

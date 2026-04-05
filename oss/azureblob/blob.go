@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/langgenius/dify-cloud-kit/oss"
 )
@@ -15,20 +16,34 @@ type AzureBlobStorage struct {
 }
 
 func NewAzureBlobStorage(args oss.OSSArgs) (oss.OSS, error) {
+	var client *azblob.Client
+	var err error
+
 	if args.AzureBlob == nil {
 		return nil, oss.ErrArgumentInvalid.WithDetail("can't find Azure Blob argument in OSSArgs")
 	}
-	err := args.AzureBlob.Validate()
+	err = args.AzureBlob.Validate()
 	if err != nil {
 		return nil, err
 	}
-	connectionString := args.AzureBlob.ConnectionString
 	containerName := args.AzureBlob.ContainerName
-	client, err := azblob.NewClientFromConnectionString(connectionString, nil)
-	if err != nil {
-		return nil, oss.ErrProviderInit.WithError(err)
-	}
+	if args.AzureBlob.UseManagedIdentity {
+		cred, err := azidentity.NewDefaultAzureCredential(nil)
+		if err != nil {
+			return nil, oss.ErrProviderInit.WithError(err)
+		}
+		client, err = azblob.NewClient(args.AzureBlob.ServiceURL, cred, nil)
+		if err != nil {
+			return nil, oss.ErrProviderInit.WithError(err)
+		}
+	} else {
+		connectionString := args.AzureBlob.ConnectionString
+		client, err = azblob.NewClientFromConnectionString(connectionString, nil)
+		if err != nil {
+			return nil, oss.ErrProviderInit.WithError(err)
+		}
 
+	}
 	return &AzureBlobStorage{
 		client:        client,
 		containerName: containerName,
