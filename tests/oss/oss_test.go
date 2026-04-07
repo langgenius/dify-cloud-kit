@@ -118,6 +118,17 @@ var allCases = []testArgsCases{
 		},
 		skip: false,
 	},
+	{
+		vendor: "azure",
+		args: oss.OSSArgs{
+			AzureBlob: &oss.AzureBlob{
+				UseManagedIdentity: true,
+				ContainerName:      os.Getenv("AZURE_CONTAINER"),
+				ServiceURL:         os.Getenv("AZURE_SERVICE_URL"),
+			},
+		},
+		skip: true,
+	},
 }
 
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
