@@ -145,14 +145,21 @@ func randomString(length int) string {
 func TestAll(t *testing.T) {
 	prefix := randomString(5)
 	key := fmt.Sprintf("%s/%s", prefix, randomString(10))
+	vendorFilter := os.Getenv("OSS_TEST_VENDOR")
+	dirPlaceholderKey := ""
 
 	size := 1 * 1024 * 1024
 	data := make([]byte, size)
 
+	tested := false
 	for _, c := range allCases {
 		if c.skip {
 			continue
 		}
+		if vendorFilter != "" && c.vendor != vendorFilter {
+			continue
+		}
+		tested = true
 		storage, err := factory.Load(c.vendor, c.args)
 		if err != nil {
 			log.Fatal(err)
@@ -169,6 +176,12 @@ func TestAll(t *testing.T) {
 
 		err = storage.Save(key, data)
 		assert.Nil(t, err, info)
+
+		if c.vendor == "huawei" {
+			dirPlaceholderKey = fmt.Sprintf("%s/langgenius/", prefix)
+			err = storage.Save(dirPlaceholderKey, []byte{})
+			assert.Nil(t, err, info)
+		}
 
 		rdata, err := storage.Load(key)
 		assert.Equal(t, data, rdata, info)
@@ -187,10 +200,18 @@ func TestAll(t *testing.T) {
 		assert.Nil(t, err, info)
 		// Verify that List returns relative paths (without prefix)
 		expectedRelativePath := key[len(prefix)+1:] // +1 for the "/" separator
-		assert.Equal(t, expectedRelativePath, ossPaths[0].Path, info+" - List should return relative path")
+		if assert.Equal(t, 1, len(ossPaths), info) {
+			assert.Equal(t, expectedRelativePath, ossPaths[0].Path, info+" - List should return relative path")
+		}
 
 		err = storage.Delete(key)
 		assert.Nil(t, err, info)
+
+		if dirPlaceholderKey != "" {
+			err = storage.Delete(dirPlaceholderKey)
+			assert.Nil(t, err, info)
+			dirPlaceholderKey = ""
+		}
 
 		exist, err = storage.Exists(key)
 		assert.Equal(t, false, exist, info)
@@ -199,5 +220,9 @@ func TestAll(t *testing.T) {
 		ossPaths, err = storage.List(prefix)
 		assert.Equal(t, 0, len(ossPaths), info)
 		assert.Nil(t, err, info)
+	}
+
+	if vendorFilter != "" && !tested {
+		t.Fatalf("no oss test cases matched OSS_TEST_VENDOR=%q", vendorFilter)
 	}
 }
