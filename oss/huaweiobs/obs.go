@@ -2,11 +2,10 @@ package huaweiobs
 
 import (
 	"io"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
-
-	"math/rand"
 
 	"github.com/huaweicloud/huaweicloud-sdk-go-obs/obs"
 	"github.com/langgenius/dify-cloud-kit/oss"
@@ -134,10 +133,8 @@ func (h *HuaweiOBSStorage) List(prefix string) ([]oss.OSSPath, error) {
 		}
 
 		for _, v := range output.Contents {
-			key := strings.TrimPrefix(v.Key, prefix)
-			key = strings.TrimPrefix(key, "/")
-
-			if key == "" {
+			key, ok := listedObjectPath(prefix, v.Key)
+			if !ok {
 				continue
 			}
 			paths = append(paths, oss.OSSPath{
@@ -165,6 +162,16 @@ func (h *HuaweiOBSStorage) Delete(key string) error {
 
 func (h *HuaweiOBSStorage) Type() string {
 	return oss.OSS_TYPE_HUAWEI_OBS
+}
+
+func listedObjectPath(prefix string, objectKey string) (string, bool) {
+	key := strings.TrimPrefix(objectKey, prefix)
+	key = strings.TrimLeft(key, "/")
+	if key == "" || strings.HasSuffix(key, "/") {
+		return "", false
+	}
+
+	return key, true
 }
 
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
