@@ -12,8 +12,9 @@ import (
 )
 
 type HuaweiOBSStorage struct {
-	bucket string
-	client *obs.ObsClient
+	bucket       string
+	client       *obs.ObsClient
+	oidcProvider *oidcCredentialsProvider
 }
 
 func NewHuaweiOBSStorage(args oss.OSSArgs) (oss.OSS, error) {
@@ -30,6 +31,11 @@ func NewHuaweiOBSStorage(args oss.OSSArgs) (oss.OSS, error) {
 	endpoint := args.HuaweiOBS.Server
 	bucket := args.HuaweiOBS.Bucket
 	pathStyle := args.HuaweiOBS.PathStyle
+
+	if args.HuaweiOBS.UseOIDC {
+		return newOIDCHuaweiOBSStorage(args)
+	}
+
 	client, err := obs.New(ak, sk, endpoint, obs.WithPathStyle(pathStyle))
 	if err != nil {
 		return nil, oss.ErrProviderInit.WithError(err)
@@ -41,7 +47,39 @@ func NewHuaweiOBSStorage(args oss.OSSArgs) (oss.OSS, error) {
 	}, nil
 }
 
+func newOIDCHuaweiOBSStorage(args oss.OSSArgs) (oss.OSS, error) {
+	provider, err := newOIDCCredentialsProvider(args.HuaweiOBS.IdpID, args.HuaweiOBS.OIDCTokenFile)
+	if err != nil {
+		return nil, oss.ErrProviderInit.WithError(err)
+	}
+
+	client, err := obs.New("", "", args.HuaweiOBS.Server, obs.WithPathStyle(args.HuaweiOBS.PathStyle))
+	if err != nil {
+		return nil, oss.ErrProviderInit.WithError(err)
+	}
+	if err := provider.applyTo(client); err != nil {
+		return nil, oss.ErrProviderInit.WithError(err)
+	}
+
+	return &HuaweiOBSStorage{
+		bucket:       args.HuaweiOBS.Bucket,
+		client:       client,
+		oidcProvider: provider,
+	}, nil
+}
+
+func (h *HuaweiOBSStorage) refreshCredentials() error {
+	if h.oidcProvider == nil {
+		return nil
+	}
+	return h.oidcProvider.applyTo(h.client)
+}
+
 func (h *HuaweiOBSStorage) Save(key string, data []byte) error {
+	if err := h.refreshCredentials(); err != nil {
+		return err
+	}
+
 	tmpFilename := randomString(5)
 	file, err := os.CreateTemp("/tmp", tmpFilename)
 	if err != nil {
@@ -67,6 +105,10 @@ func (h *HuaweiOBSStorage) Save(key string, data []byte) error {
 }
 
 func (h *HuaweiOBSStorage) Load(key string) ([]byte, error) {
+	if err := h.refreshCredentials(); err != nil {
+		return nil, err
+	}
+
 	output, err := h.client.GetObject(&obs.GetObjectInput{
 		GetObjectMetadataInput: obs.GetObjectMetadataInput{
 			Bucket: h.bucket,
@@ -82,6 +124,10 @@ func (h *HuaweiOBSStorage) Load(key string) ([]byte, error) {
 }
 
 func (h *HuaweiOBSStorage) Exists(key string) (bool, error) {
+	if err := h.refreshCredentials(); err != nil {
+		return false, err
+	}
+
 	_, err := h.client.HeadObject(&obs.HeadObjectInput{
 		Bucket: h.bucket,
 		Key:    key,
@@ -98,6 +144,10 @@ func (h *HuaweiOBSStorage) Exists(key string) (bool, error) {
 }
 
 func (h *HuaweiOBSStorage) State(key string) (oss.OSSState, error) {
+	if err := h.refreshCredentials(); err != nil {
+		return oss.OSSState{}, err
+	}
+
 	output, err := h.client.GetAttribute(&obs.GetAttributeInput{
 		GetObjectMetadataInput: obs.GetObjectMetadataInput{
 			Bucket: h.bucket,
@@ -114,6 +164,10 @@ func (h *HuaweiOBSStorage) State(key string) (oss.OSSState, error) {
 }
 
 func (h *HuaweiOBSStorage) List(prefix string) ([]oss.OSSPath, error) {
+	if err := h.refreshCredentials(); err != nil {
+		return nil, err
+	}
+
 	if !strings.HasSuffix(prefix, "/") {
 		prefix = prefix + "/"
 	}
@@ -153,6 +207,10 @@ func (h *HuaweiOBSStorage) List(prefix string) ([]oss.OSSPath, error) {
 }
 
 func (h *HuaweiOBSStorage) Delete(key string) error {
+	if err := h.refreshCredentials(); err != nil {
+		return err
+	}
+
 	_, err := h.client.DeleteObject(&obs.DeleteObjectInput{
 		Bucket: h.bucket,
 		Key:    key,

@@ -164,16 +164,30 @@ func (g *GoogleCloudStorage) Validate() error {
 }
 
 type HuaweiOBS struct {
-	Bucket    string
-	AccessKey string
-	SecretKey string
-	Server    string
-	PathStyle bool
+	Bucket        string
+	AccessKey     string
+	SecretKey     string
+	Server        string
+	PathStyle     bool
+	UseOIDC       bool
+	IdpID         string
+	OIDCTokenFile string
 }
 
 func (h *HuaweiOBS) Validate() error {
-	if h.Bucket == "" || h.AccessKey == "" || h.SecretKey == "" || h.Server == "" {
-		msg := fmt.Sprintf("bucket, accesskKey, secretKey, server cannot be empty.")
+	if h.Bucket == "" || h.Server == "" {
+		msg := fmt.Sprintf("bucket and server cannot be empty.")
+		return ErrArgumentInvalid.WithDetail(msg)
+	}
+	if h.UseOIDC {
+		if h.IdpID == "" {
+			msg := "idpID cannot be empty when OIDC is enabled."
+			return ErrArgumentInvalid.WithDetail(msg)
+		}
+		return nil
+	}
+	if h.AccessKey == "" || h.SecretKey == "" {
+		msg := "accessKey and secretKey cannot be empty when OIDC is disabled."
 		return ErrArgumentInvalid.WithDetail(msg)
 	}
 	return nil
