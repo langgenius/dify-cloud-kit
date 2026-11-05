@@ -66,6 +66,102 @@ store, err := factory.Load("s3", oss.OSSArgs{
 })
 ```
 
+## 🌊 Streaming Reads (Range Support)
+
+`oss.OSS.Load` always buffers the entire object in memory. For large objects or
+partial reads, providers can implement the optional `oss.StreamingOSS`
+interface, which streams object content through an `io.ReadCloser` without
+buffering.
+
+```go
+type StreamingOSS interface {
+    OSS
+    Open(ctx context.Context, key string, byteRange *ByteRange) (io.ReadCloser, error)
+}
+
+type ByteRange struct {
+    Offset int64 // >= 0
+    Length int64 // > 0 bounded, -1 = from Offset to EOF
+}
+```
+
+Semantics:
+
+- `byteRange == nil` streams the whole object.
+- `Length == -1` streams from `Offset` to end of object.
+- `Length == 0` or `< -1` fails with `oss.ErrInvalidRange` before any I/O.
+- A range outside the object fails with `oss.ErrRangeNotSatisfiable` (HTTP 416
+  is mapped to this sentinel for remote providers).
+- There is **no suffix-range parser**: resolve `bytes=-N` yourself using the
+  object size from `State`.
+- Cancelling `ctx` aborts the request and subsequent `Read` calls. Always
+  `defer rc.Close()`.
+- **No automatic fallback**: backends without `Open` fail the type assertion;
+  the library never secretly buffers a ranged request via `Load`.
+- Ranged `Open` calls verify the server actually honored the `Range` header
+  (via `Content-Range`); a server that ignores it causes an error instead of a
+  silent full download.
+
+### Supported streaming providers
+
+| Provider   | `Open` support | Notes                                     |
+|------------|----------------|-------------------------------------------|
+| Local      | ✅             | `os.File` + `io.SectionReader`, end clamped to file size |
+| AWS S3     | ✅             | `GetObjectInput.Range`, body streamed     |
+| Aliyun OSS | ✅             | `NormalizedRange` + `RangeBehavior("standard")` |
+| Azure Blob | ✅             | `DownloadStreamOptions.Range`, `NewRetryReader` resumes interrupted reads |
+| Others     | ❌             | type assertion fails                      |
+
+### Capability detection
+
+Callers can check support explicitly instead of relying on a raw type
+assertion:
+
+```go
+if !oss.SupportsStreaming(store) {
+    // backend cannot stream; no fallback buffering is performed
+}
+```
+
+`oss.OpenStream` performs the assertion and delegates to `Open`, returning an
+error wrapping `oss.ErrStreamingNotSupported` for unsupported (or nil)
+backends:
+
+```go
+rc, err := oss.OpenStream(ctx, store, key, &oss.ByteRange{Offset: 0, Length: -1})
+if errors.Is(err, oss.ErrStreamingNotSupported) {
+    // handle non-streaming backend
+}
+if err != nil {
+    return err
+}
+defer rc.Close()
+```
+
+### Example
+
+```go
+streamer, ok := store.(oss.StreamingOSS)
+if !ok {
+    return errors.New("backend does not support streaming")
+}
+
+ctx := request.Context() // tie the read to the request lifecycle
+rc, err := streamer.Open(ctx, "big-file.bin", &oss.ByteRange{Offset: 0, Length: -1})
+if err != nil {
+    return err
+}
+defer rc.Close()
+
+// streams without loading the whole object into memory
+if _, err := io.Copy(w, rc); err != nil {
+    return err
+}
+```
+
+Note: enterprise-side caller integration (e.g. wiring `StreamingOSS` into
+dify-enterprise) is handled separately and is out of scope for this library.
+
 ## 🧪 Testing
 
 Unit tests are located in `tests/oss/oss_test.go`.
