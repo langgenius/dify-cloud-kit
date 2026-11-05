@@ -231,10 +231,11 @@ gated on `CLOUDKIT_INTEGRATION=1` — a plain `go test ./...` skips it.
 
 ### CI
 
-`.github/workflows/integration.yml` runs `make test-integration` on every
-pull request, push to `main`, and manual dispatch ("Storage Integration"
-check). No secrets are needed; emulator container logs are uploaded as a
-workflow artifact on failure and services are always torn down at the end.
+`.github/workflows/integration.yml` runs the unit tests (`./oss/...`) first,
+then `make test-integration`, on every pull request, push to `main`, and
+manual dispatch ("Storage Integration" check). No secrets are needed;
+emulator container logs are uploaded as a workflow artifact on failure and
+services are always torn down at the end.
 
 ### Scope
 
@@ -244,5 +245,5 @@ workflow artifact on failure and services are always torn down at the end.
 - A true-cloud opt-in test (`oss/azureblob/blob_live_test.go`, requires
   `CLOUDKIT_AZURE_LIVE_*` env vars and an existing blob) is separate.
 
-Note: this suite depends on the streaming `OpenStream`/`StreamingOSS` API and
-must rebase onto the streaming feature branch once it lands.
+The streaming feature and these emulator/CI tests ship together in the same
+PR — there is no stacked-branch dependency.
