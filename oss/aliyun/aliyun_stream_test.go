@@ -98,13 +98,13 @@ func (h *objectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write(part)
 }
 
-func TestAliyunOpenFull(t *testing.T) {
+func TestAliyunRangeFull(t *testing.T) {
 	var rangeHdr string
 	st := newTestStorage(t, &objectHandler{body: []byte("hello world"), rangeHdr: &rangeHdr}, "")
 
-	rc, err := st.Open(context.Background(), "key", nil)
+	rc, err := st.Range(context.Background(), "key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -119,13 +119,13 @@ func TestAliyunOpenFull(t *testing.T) {
 	}
 }
 
-func TestAliyunOpenBounded(t *testing.T) {
+func TestAliyunRangeBounded(t *testing.T) {
 	var rangeHdr, behavior string
 	st := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr, behavior: &behavior}, "")
 
-	rc, err := st.Open(context.Background(), "key", &difyoss.ByteRange{Offset: 2, Length: 4})
+	rc, err := st.Range(context.Background(), "key", &difyoss.ByteRange{Offset: 2, Length: 4})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -143,13 +143,13 @@ func TestAliyunOpenBounded(t *testing.T) {
 	}
 }
 
-func TestAliyunOpenOpenEnded(t *testing.T) {
+func TestAliyunRangeOpenEnded(t *testing.T) {
 	var rangeHdr string
 	st := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr}, "")
 
-	rc, err := st.Open(context.Background(), "key", &difyoss.ByteRange{Offset: 4, Length: -1})
+	rc, err := st.Range(context.Background(), "key", &difyoss.ByteRange{Offset: 4, Length: -1})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -164,13 +164,13 @@ func TestAliyunOpenOpenEnded(t *testing.T) {
 	}
 }
 
-func TestAliyunOpenHonorsConfiguredPrefix(t *testing.T) {
+func TestAliyunRangeHonorsConfiguredPrefix(t *testing.T) {
 	var reqPath string
 	st := newTestStorage(t, &objectHandler{body: []byte("x"), path: &reqPath}, "prefix/")
 
-	rc, err := st.Open(context.Background(), "dir/key", nil)
+	rc, err := st.Range(context.Background(), "dir/key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	rc.Close()
 	if !strings.HasSuffix(reqPath, "/prefix/dir/key") {
@@ -178,7 +178,7 @@ func TestAliyunOpenHonorsConfiguredPrefix(t *testing.T) {
 	}
 }
 
-func TestAliyunOpenInvalidRangeNoRequest(t *testing.T) {
+func TestAliyunRangeInvalidRangeNoRequest(t *testing.T) {
 	var requests int32
 	st := newTestStorage(t, &objectHandler{body: []byte("x"), requests: &requests}, "")
 
@@ -187,7 +187,7 @@ func TestAliyunOpenInvalidRangeNoRequest(t *testing.T) {
 		{Offset: 0, Length: 0},
 		{Offset: 0, Length: -2},
 	} {
-		if _, err := st.Open(context.Background(), "key", &r); !errors.Is(err, difyoss.ErrInvalidRange) {
+		if _, err := st.Range(context.Background(), "key", &r); !errors.Is(err, difyoss.ErrInvalidRange) {
 			t.Fatalf("range=%+v: expected ErrInvalidRange, got %v", r, err)
 		}
 	}
@@ -196,13 +196,13 @@ func TestAliyunOpenInvalidRangeNoRequest(t *testing.T) {
 	}
 }
 
-func TestAliyunOpenCanceledBeforeRequest(t *testing.T) {
+func TestAliyunRangeCanceledBeforeRequest(t *testing.T) {
 	var requests int32
 	st := newTestStorage(t, &objectHandler{body: []byte("x"), requests: &requests}, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := st.Open(ctx, "key", nil); err == nil {
+	if _, err := st.Range(ctx, "key", nil); err == nil {
 		t.Fatal("expected error")
 	}
 	if n := atomic.LoadInt32(&requests); n != 0 {
@@ -210,7 +210,7 @@ func TestAliyunOpenCanceledBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestAliyunOpenCanceledInflight(t *testing.T) {
+func TestAliyunRangeCanceledInflight(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +236,7 @@ func TestAliyunOpenCanceledInflight(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := st.Open(ctx, "key", nil)
+		_, err := st.Range(ctx, "key", nil)
 		done <- err
 	}()
 	select {
@@ -251,13 +251,13 @@ func TestAliyunOpenCanceledInflight(t *testing.T) {
 			t.Fatal("expected error after cancel")
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Open did not return after cancel")
+		t.Fatal("Range did not return after cancel")
 	}
 }
 
-// TestAliyunOpenCanceledDuringBodyRead cancels the context after Open
+// TestAliyunRangeCanceledDuringBodyRead cancels the context after Range
 // succeeded while a Read is blocked on an in-flight body.
-func TestAliyunOpenCanceledDuringBodyRead(t *testing.T) {
+func TestAliyunRangeCanceledDuringBodyRead(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "10")
@@ -284,9 +284,9 @@ func TestAliyunOpenCanceledDuringBodyRead(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rc, err := st.Open(ctx, "key", nil)
+	rc, err := st.Range(ctx, "key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 
@@ -307,33 +307,33 @@ func TestAliyunOpenCanceledDuringBodyRead(t *testing.T) {
 	}
 }
 
-func TestAliyunOpenMissing(t *testing.T) {
+func TestAliyunRangeMissing(t *testing.T) {
 	st := newTestStorage(t, &objectHandler{statusCode: http.StatusNotFound, errCode: "NoSuchKey"}, "")
-	if _, err := st.Open(context.Background(), "missing", nil); err == nil {
+	if _, err := st.Range(context.Background(), "missing", nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestAliyunOpenRangeNotSatisfiable(t *testing.T) {
+func TestAliyunRangeRangeNotSatisfiable(t *testing.T) {
 	st := newTestStorage(t, &objectHandler{statusCode: http.StatusRequestedRangeNotSatisfiable, errCode: "InvalidRange"}, "")
-	_, err := st.Open(context.Background(), "key", &difyoss.ByteRange{Offset: 100, Length: 1})
+	_, err := st.Range(context.Background(), "key", &difyoss.ByteRange{Offset: 100, Length: 1})
 	if !errors.Is(err, difyoss.ErrRangeNotSatisfiable) {
 		t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
 	}
 }
 
-func TestAliyunOpenServerIgnoresRange(t *testing.T) {
+func TestAliyunRangeServerIgnoresRange(t *testing.T) {
 	st := newTestStorage(t, &objectHandler{body: []byte("0123456789"), ignore: true}, "")
-	rc, err := st.Open(context.Background(), "key", &difyoss.ByteRange{Offset: 2, Length: 4})
+	rc, err := st.Range(context.Background(), "key", &difyoss.ByteRange{Offset: 2, Length: 4})
 	if err == nil {
 		rc.Close()
 		t.Fatal("expected error when server ignores Range")
 	}
 }
 
-// TestAliyunOpenRejectedRangeClosesBody ensures the response body is closed
+// TestAliyunRangeRejectedRangeClosesBody ensures the response body is closed
 // when a ranged response is rejected for missing Content-Range.
-func TestAliyunOpenRejectedRangeClosesBody(t *testing.T) {
+func TestAliyunRangeRejectedRangeClosesBody(t *testing.T) {
 	var closed int32
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -356,7 +356,7 @@ func TestAliyunOpenRejectedRangeClosesBody(t *testing.T) {
 	}
 	st := &AliyunOSSStorage{client: client, bucket: bucket}
 
-	_, err = st.Open(context.Background(), "key", &difyoss.ByteRange{Offset: 2, Length: 4})
+	_, err = st.Range(context.Background(), "key", &difyoss.ByteRange{Offset: 2, Length: 4})
 	if err == nil {
 		t.Fatal("expected rejection of range-ignoring response")
 	}
@@ -365,15 +365,15 @@ func TestAliyunOpenRejectedRangeClosesBody(t *testing.T) {
 	}
 }
 
-// TestAliyunOpenOversizedEndClamped verifies a bounded range extending past
+// TestAliyunRangeOversizedEndClamped verifies a bounded range extending past
 // EOF is accepted when the server clamps the end to the last byte.
-func TestAliyunOpenOversizedEndClamped(t *testing.T) {
+func TestAliyunRangeOversizedEndClamped(t *testing.T) {
 	var rangeHdr string
 	st := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr}, "")
 
-	rc, err := st.Open(context.Background(), "key", &difyoss.ByteRange{Offset: 8, Length: 100})
+	rc, err := st.Range(context.Background(), "key", &difyoss.ByteRange{Offset: 8, Length: 100})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -388,11 +388,11 @@ func TestAliyunOpenOversizedEndClamped(t *testing.T) {
 	}
 }
 
-func TestAliyunOpenEmptyObject(t *testing.T) {
+func TestAliyunRangeEmptyObject(t *testing.T) {
 	st := newTestStorage(t, &objectHandler{body: nil}, "")
-	rc, err := st.Open(context.Background(), "key", nil)
+	rc, err := st.Range(context.Background(), "key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -421,9 +421,9 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
-// TestAliyunOpenStreamsBeforeFullDownload proves Open returns after headers
+// TestAliyunRangeStreamsBeforeFullDownload proves Range returns after headers
 // and first bytes are readable while the rest is still in flight.
-func TestAliyunOpenStreamsBeforeFullDownload(t *testing.T) {
+func TestAliyunRangeStreamsBeforeFullDownload(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Range", "bytes 0-9/10")
@@ -456,7 +456,7 @@ func TestAliyunOpenStreamsBeforeFullDownload(t *testing.T) {
 	}
 	opened := make(chan res, 1)
 	go func() {
-		rc, err := st.Open(context.Background(), "key", &difyoss.ByteRange{Offset: 0, Length: -1})
+		rc, err := st.Range(context.Background(), "key", &difyoss.ByteRange{Offset: 0, Length: -1})
 		opened <- res{rc, err}
 	}()
 
@@ -464,11 +464,11 @@ func TestAliyunOpenStreamsBeforeFullDownload(t *testing.T) {
 	select {
 	case r := <-opened:
 		if r.err != nil {
-			t.Fatalf("Open: %v", r.err)
+			t.Fatalf("Range: %v", r.err)
 		}
 		rc = r.rc
 	case <-time.After(5 * time.Second):
-		t.Fatal("Open blocked until full body downloaded")
+		t.Fatal("Range blocked until full body downloaded")
 	}
 	defer rc.Close()
 

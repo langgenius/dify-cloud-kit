@@ -85,13 +85,13 @@ func (h *objectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write(part)
 }
 
-func TestAzureOpenFull(t *testing.T) {
+func TestAzureRangeFull(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("hello world"), rangeHdr: &rangeHdr})
 
-	rc, err := st.Open(context.Background(), "key", nil)
+	rc, err := st.Range(context.Background(), "key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -106,11 +106,11 @@ func TestAzureOpenFull(t *testing.T) {
 	}
 }
 
-func TestAzureOpenEmptyObject(t *testing.T) {
+func TestAzureRangeEmptyObject(t *testing.T) {
 	st, _ := newTestStorage(t, &objectHandler{body: nil})
-	rc, err := st.Open(context.Background(), "key", nil)
+	rc, err := st.Range(context.Background(), "key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -122,13 +122,13 @@ func TestAzureOpenEmptyObject(t *testing.T) {
 	}
 }
 
-func TestAzureOpenBounded(t *testing.T) {
+func TestAzureRangeBounded(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr})
 
-	rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -143,13 +143,13 @@ func TestAzureOpenBounded(t *testing.T) {
 	}
 }
 
-func TestAzureOpenToEOF(t *testing.T) {
+func TestAzureRangeToEOF(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr})
 
-	rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 4, Length: -1})
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 4, Length: -1})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -164,16 +164,16 @@ func TestAzureOpenToEOF(t *testing.T) {
 	}
 }
 
-// TestAzureOpenZeroToEOF verifies ByteRange{0,-1} sends an explicit signed
+// TestAzureRangeZeroToEOF verifies ByteRange{0,-1} sends an explicit signed
 // range header even though the SDK's HTTPRange{0,0} would omit it, and that
 // the same range on an empty object yields 416 -> ErrRangeNotSatisfiable.
-func TestAzureOpenZeroToEOF(t *testing.T) {
+func TestAzureRangeZeroToEOF(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr})
 
-	rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -189,19 +189,19 @@ func TestAzureOpenZeroToEOF(t *testing.T) {
 
 	// empty object + bytes=0- must surface ErrRangeNotSatisfiable
 	st2, _ := newTestStorage(t, &objectHandler{body: nil})
-	_, err = st2.Open(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
+	_, err = st2.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
 	if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
 		t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
 	}
 }
 
-func TestAzureOpenOversizedEndClamped(t *testing.T) {
+func TestAzureRangeOversizedEndClamped(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr})
 
-	rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 8, Length: 100})
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 8, Length: 100})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -216,7 +216,7 @@ func TestAzureOpenOversizedEndClamped(t *testing.T) {
 	}
 }
 
-func TestAzureOpenInvalidRangeNoRequest(t *testing.T) {
+func TestAzureRangeInvalidRangeNoRequest(t *testing.T) {
 	var requests int32
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("x"), requests: &requests})
 
@@ -226,7 +226,7 @@ func TestAzureOpenInvalidRangeNoRequest(t *testing.T) {
 		{Offset: 0, Length: -2},
 		{Offset: 1<<62 + 1, Length: 1 << 62}, // overflowing end
 	} {
-		if _, err := st.Open(context.Background(), "key", &r); !errors.Is(err, oss.ErrInvalidRange) {
+		if _, err := st.Range(context.Background(), "key", &r); !errors.Is(err, oss.ErrInvalidRange) {
 			t.Fatalf("range=%+v: expected ErrInvalidRange, got %v", r, err)
 		}
 	}
@@ -235,24 +235,24 @@ func TestAzureOpenInvalidRangeNoRequest(t *testing.T) {
 	}
 }
 
-func TestAzureOpenMissing(t *testing.T) {
+func TestAzureRangeMissing(t *testing.T) {
 	st, _ := newTestStorage(t, &objectHandler{statusCode: http.StatusNotFound, errCode: "BlobNotFound"})
-	if _, err := st.Open(context.Background(), "missing", nil); err == nil {
+	if _, err := st.Range(context.Background(), "missing", nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestAzureOpenRangeNotSatisfiable(t *testing.T) {
+func TestAzureRangeRangeNotSatisfiable(t *testing.T) {
 	st, _ := newTestStorage(t, &objectHandler{statusCode: http.StatusRequestedRangeNotSatisfiable, errCode: "InvalidRange"})
-	_, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 100, Length: 1})
+	_, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 100, Length: 1})
 	if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
 		t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
 	}
 }
 
-// TestAzureOpenPlain416 verifies HTTP 416 maps to ErrRangeNotSatisfiable even
+// TestAzureRangePlain416 verifies HTTP 416 maps to ErrRangeNotSatisfiable even
 // without an XML error body.
-func TestAzureOpenPlain416(t *testing.T) {
+func TestAzureRangePlain416(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 		w.Write([]byte("not xml"))
@@ -264,7 +264,7 @@ func TestAzureOpenPlain416(t *testing.T) {
 	}
 	st := &AzureBlobStorage{client: client, containerName: "cont"}
 
-	_, err = st.Open(context.Background(), "key", &oss.ByteRange{Offset: 100, Length: 1})
+	_, err = st.Range(context.Background(), "key", &oss.ByteRange{Offset: 100, Length: 1})
 	if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
 		t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
 	}
@@ -298,10 +298,10 @@ func newTrackingStorage(t *testing.T, rt http.RoundTripper) *AzureBlobStorage {
 	return &AzureBlobStorage{client: client, containerName: "cont"}
 }
 
-// TestAzureOpenRejectedRangeClosesBody ensures the response body is closed
+// TestAzureRangeRejectedRangeClosesBody ensures the response body is closed
 // when a ranged response is rejected for a missing or mismatched
 // Content-Range.
-func TestAzureOpenRejectedRangeClosesBody(t *testing.T) {
+func TestAzureRangeRejectedRangeClosesBody(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		contentRange string
@@ -328,7 +328,7 @@ func TestAzureOpenRejectedRangeClosesBody(t *testing.T) {
 			})
 			st := newTrackingStorage(t, rt)
 
-			_, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
+			_, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
 			if err == nil {
 				t.Fatal("expected rejection")
 			}
@@ -339,13 +339,13 @@ func TestAzureOpenRejectedRangeClosesBody(t *testing.T) {
 	}
 }
 
-func TestAzureOpenCanceledBeforeRequest(t *testing.T) {
+func TestAzureRangeCanceledBeforeRequest(t *testing.T) {
 	var requests int32
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("x"), requests: &requests})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := st.Open(ctx, "key", nil); err == nil {
+	if _, err := st.Range(ctx, "key", nil); err == nil {
 		t.Fatal("expected error")
 	}
 	if n := atomic.LoadInt32(&requests); n != 0 {
@@ -353,7 +353,7 @@ func TestAzureOpenCanceledBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestAzureOpenCanceledInflight(t *testing.T) {
+func TestAzureRangeCanceledInflight(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +374,7 @@ func TestAzureOpenCanceledInflight(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := st.Open(ctx, "key", nil)
+		_, err := st.Range(ctx, "key", nil)
 		done <- err
 	}()
 	select {
@@ -389,13 +389,13 @@ func TestAzureOpenCanceledInflight(t *testing.T) {
 			t.Fatal("expected error after cancel")
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Open did not return after cancel")
+		t.Fatal("Range did not return after cancel")
 	}
 }
 
-// TestAzureOpenCanceledDuringBodyRead cancels the context after Open
+// TestAzureRangeCanceledDuringBodyRead cancels the context after Range
 // succeeded while a Read is blocked on an in-flight body.
-func TestAzureOpenCanceledDuringBodyRead(t *testing.T) {
+func TestAzureRangeCanceledDuringBodyRead(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "10")
@@ -417,9 +417,9 @@ func TestAzureOpenCanceledDuringBodyRead(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rc, err := st.Open(ctx, "key", nil)
+	rc, err := st.Range(ctx, "key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 
@@ -440,10 +440,10 @@ func TestAzureOpenCanceledDuringBodyRead(t *testing.T) {
 	}
 }
 
-// TestAzureOpenStreamsBeforeFullDownload proves Open returns after headers
+// TestAzureRangeStreamsBeforeFullDownload proves Range returns after headers
 // and first bytes are readable while the rest is still in flight, and that
 // Close releases the blocked handler.
-func TestAzureOpenStreamsBeforeFullDownload(t *testing.T) {
+func TestAzureRangeStreamsBeforeFullDownload(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Range", "bytes 0-9/10")
@@ -470,7 +470,7 @@ func TestAzureOpenStreamsBeforeFullDownload(t *testing.T) {
 	}
 	opened := make(chan res, 1)
 	go func() {
-		rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
+		rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
 		opened <- res{rc, err}
 	}()
 
@@ -478,11 +478,11 @@ func TestAzureOpenStreamsBeforeFullDownload(t *testing.T) {
 	select {
 	case r := <-opened:
 		if r.err != nil {
-			t.Fatalf("Open: %v", r.err)
+			t.Fatalf("Range: %v", r.err)
 		}
 		rc = r.rc
 	case <-time.After(5 * time.Second):
-		t.Fatal("Open blocked until full body downloaded")
+		t.Fatal("Range blocked until full body downloaded")
 	}
 	defer rc.Close()
 
@@ -550,9 +550,9 @@ func runRetryTest(t *testing.T, byteRange *oss.ByteRange, body string, served in
 	h := &retryHandler{full: body, served: served, retried: make(chan struct{}), t: t}
 	st, _ := newTestStorage(t, h)
 
-	rc, err := st.Open(context.Background(), "key", byteRange)
+	rc, err := st.Range(context.Background(), "key", byteRange)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 

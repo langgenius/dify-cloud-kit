@@ -76,7 +76,7 @@ buffering.
 ```go
 type StreamingOSS interface {
     OSS
-    Open(ctx context.Context, key string, byteRange *ByteRange) (io.ReadCloser, error)
+    Range(ctx context.Context, key string, byteRange *ByteRange) (io.ReadCloser, error)
 }
 
 type ByteRange struct {
@@ -96,15 +96,15 @@ Semantics:
   object size from `State`.
 - Cancelling `ctx` aborts the request and subsequent `Read` calls. Always
   `defer rc.Close()`.
-- **No automatic fallback**: backends without `Open` fail the type assertion;
+- **No automatic fallback**: backends without `Range` fail the type assertion;
   the library never secretly buffers a ranged request via `Load`.
-- Ranged `Open` calls verify the server actually honored the `Range` header
+- Partial `Range` calls verify the server actually honored the `Range` header
   (via `Content-Range`); a server that ignores it causes an error instead of a
   silent full download.
 
 ### Supported streaming providers
 
-| Provider   | `Open` support | Notes                                     |
+| Provider   | `Range` support | Notes                                     |
 |------------|----------------|-------------------------------------------|
 | Local      | ✅             | `os.File` + `io.SectionReader`, end clamped to file size |
 | AWS S3     | ✅             | `GetObjectInput.Range`, body streamed     |
@@ -123,7 +123,7 @@ if !oss.SupportsStreaming(store) {
 }
 ```
 
-`oss.OpenStream` performs the assertion and delegates to `Open`, returning an
+`oss.OpenStream` performs the assertion and delegates to `Range`, returning an
 error wrapping `oss.ErrStreamingNotSupported` for unsupported (or nil)
 backends:
 
@@ -147,7 +147,7 @@ if !ok {
 }
 
 ctx := request.Context() // tie the read to the request lifecycle
-rc, err := streamer.Open(ctx, "big-file.bin", &oss.ByteRange{Offset: 0, Length: -1})
+rc, err := streamer.Range(ctx, "big-file.bin", &oss.ByteRange{Offset: 0, Length: -1})
 if err != nil {
     return err
 }

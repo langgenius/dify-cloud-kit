@@ -117,7 +117,7 @@ type fakeStreamingOSS struct {
 	err      error
 }
 
-func (f *fakeStreamingOSS) Open(ctx context.Context, key string, byteRange *ByteRange) (io.ReadCloser, error) {
+func (f *fakeStreamingOSS) Range(ctx context.Context, key string, byteRange *ByteRange) (io.ReadCloser, error) {
 	f.opened = true
 	f.gotCtx = ctx
 	f.gotKey = key
@@ -164,7 +164,7 @@ func TestOpenStreamDelegates(t *testing.T) {
 		t.Fatal("expected the same reader back")
 	}
 	if !fake.opened || fake.gotKey != "key" || fake.gotRange != r || fake.gotCtx.Value(ctxKey{}) != "v" {
-		t.Fatalf("Open not called with same ctx/key/range: %+v", fake)
+		t.Fatalf("Range not called with same ctx/key/range: %+v", fake)
 	}
 
 	fakeErr := errors.New("boom")

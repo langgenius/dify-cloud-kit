@@ -44,7 +44,7 @@ func (l *LocalStorage) Save(key string, data []byte) error {
 }
 
 func (l *LocalStorage) Load(key string) ([]byte, error) {
-	reader, err := l.Open(context.Background(), key, nil)
+	reader, err := l.Range(context.Background(), key, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (r *ctxFileReader) Close() error {
 	return r.file.Close()
 }
 
-func (l *LocalStorage) Open(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+func (l *LocalStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
 	if byteRange != nil {
 		if _, err := byteRange.HTTPRange(); err != nil {
 			return nil, err

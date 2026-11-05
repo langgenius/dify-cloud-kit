@@ -148,7 +148,7 @@ func (s *S3Storage) Save(key string, data []byte) error {
 }
 
 func (s *S3Storage) Load(key string) ([]byte, error) {
-	reader, err := s.Open(context.Background(), key, nil)
+	reader, err := s.Range(context.Background(), key, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func (s *S3Storage) Load(key string) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-func (s *S3Storage) Open(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+func (s *S3Storage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),

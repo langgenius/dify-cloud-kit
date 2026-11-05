@@ -104,7 +104,7 @@ func (s *AliyunOSSStorage) Save(key string, data []byte) error {
 }
 
 func (s *AliyunOSSStorage) Load(key string) ([]byte, error) {
-	reader, err := s.Open(context.Background(), key, nil)
+	reader, err := s.Range(context.Background(), key, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (s *AliyunOSSStorage) Load(key string) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-func (s *AliyunOSSStorage) Open(ctx context.Context, key string, byteRange *difyoss.ByteRange) (io.ReadCloser, error) {
+func (s *AliyunOSSStorage) Range(ctx context.Context, key string, byteRange *difyoss.ByteRange) (io.ReadCloser, error) {
 	options := []oss.Option{oss.WithContext(ctx)}
 	if byteRange != nil {
 		rangeHeader, err := byteRange.HTTPRange()

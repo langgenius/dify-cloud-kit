@@ -89,13 +89,13 @@ func (h *objectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write(part)
 }
 
-func TestS3OpenFull(t *testing.T) {
+func TestS3RangeFull(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("hello world"), rangeHdr: &rangeHdr})
 
-	rc, err := st.Open(context.Background(), "key", nil)
+	rc, err := st.Range(context.Background(), "key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -110,13 +110,13 @@ func TestS3OpenFull(t *testing.T) {
 	}
 }
 
-func TestS3OpenBounded(t *testing.T) {
+func TestS3RangeBounded(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr})
 
-	rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -131,13 +131,13 @@ func TestS3OpenBounded(t *testing.T) {
 	}
 }
 
-func TestS3OpenOpenEnded(t *testing.T) {
+func TestS3RangeOpenEnded(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr})
 
-	rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 4, Length: -1})
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 4, Length: -1})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -152,7 +152,7 @@ func TestS3OpenOpenEnded(t *testing.T) {
 	}
 }
 
-func TestS3OpenInvalidRangeNoRequest(t *testing.T) {
+func TestS3RangeInvalidRangeNoRequest(t *testing.T) {
 	var requests int32
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("x"), requests: &requests})
 
@@ -161,7 +161,7 @@ func TestS3OpenInvalidRangeNoRequest(t *testing.T) {
 		{Offset: 0, Length: 0},
 		{Offset: 0, Length: -2},
 	} {
-		if _, err := st.Open(context.Background(), "key", &r); !errors.Is(err, oss.ErrInvalidRange) {
+		if _, err := st.Range(context.Background(), "key", &r); !errors.Is(err, oss.ErrInvalidRange) {
 			t.Fatalf("range=%+v: expected ErrInvalidRange, got %v", r, err)
 		}
 	}
@@ -170,13 +170,13 @@ func TestS3OpenInvalidRangeNoRequest(t *testing.T) {
 	}
 }
 
-func TestS3OpenCanceledBeforeRequest(t *testing.T) {
+func TestS3RangeCanceledBeforeRequest(t *testing.T) {
 	var requests int32
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("x"), requests: &requests})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := st.Open(ctx, "key", nil); err == nil {
+	if _, err := st.Range(ctx, "key", nil); err == nil {
 		t.Fatal("expected error")
 	}
 	if n := atomic.LoadInt32(&requests); n != 0 {
@@ -184,7 +184,7 @@ func TestS3OpenCanceledBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestS3OpenCanceledInflight(t *testing.T) {
+func TestS3RangeCanceledInflight(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +207,7 @@ func TestS3OpenCanceledInflight(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := st.Open(ctx, "key", nil)
+		_, err := st.Range(ctx, "key", nil)
 		done <- err
 	}()
 	select {
@@ -222,13 +222,13 @@ func TestS3OpenCanceledInflight(t *testing.T) {
 			t.Fatalf("expected context.Canceled, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Open did not return after cancel")
+		t.Fatal("Range did not return after cancel")
 	}
 }
 
-// TestS3OpenCanceledDuringBodyRead cancels the context after Open succeeded
+// TestS3RangeCanceledDuringBodyRead cancels the context after Range succeeded
 // while a Read is blocked on an in-flight body.
-func TestS3OpenCanceledDuringBodyRead(t *testing.T) {
+func TestS3RangeCanceledDuringBodyRead(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "10")
@@ -252,9 +252,9 @@ func TestS3OpenCanceledDuringBodyRead(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rc, err := st.Open(ctx, "key", nil)
+	rc, err := st.Range(ctx, "key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 
@@ -275,24 +275,24 @@ func TestS3OpenCanceledDuringBodyRead(t *testing.T) {
 	}
 }
 
-func TestS3OpenMissing(t *testing.T) {
+func TestS3RangeMissing(t *testing.T) {
 	st, _ := newTestStorage(t, &objectHandler{statusCode: http.StatusNotFound, errCode: "NoSuchKey"})
-	if _, err := st.Open(context.Background(), "missing", nil); err == nil {
+	if _, err := st.Range(context.Background(), "missing", nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestS3OpenRangeNotSatisfiable(t *testing.T) {
+func TestS3RangeRangeNotSatisfiable(t *testing.T) {
 	st, _ := newTestStorage(t, &objectHandler{statusCode: http.StatusRequestedRangeNotSatisfiable, errCode: "InvalidRange"})
-	_, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 100, Length: 1})
+	_, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 100, Length: 1})
 	if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
 		t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
 	}
 }
 
-// TestS3OpenPlain416 verifies HTTP 416 maps to ErrRangeNotSatisfiable even
+// TestS3RangePlain416 verifies HTTP 416 maps to ErrRangeNotSatisfiable even
 // when the error body carries no InvalidRange code.
-func TestS3OpenPlain416(t *testing.T) {
+func TestS3RangePlain416(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 		w.Write([]byte("not xml"))
@@ -306,21 +306,21 @@ func TestS3OpenPlain416(t *testing.T) {
 	})
 	st := &S3Storage{bucket: "bkt", client: client}
 
-	_, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 100, Length: 1})
+	_, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 100, Length: 1})
 	if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
 		t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
 	}
 }
 
-// TestS3OpenOversizedEndClamped verifies a bounded range extending past EOF
+// TestS3RangeOversizedEndClamped verifies a bounded range extending past EOF
 // is accepted when the server clamps the end to the last byte.
-func TestS3OpenOversizedEndClamped(t *testing.T) {
+func TestS3RangeOversizedEndClamped(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr})
 
-	rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 8, Length: 100})
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 8, Length: 100})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -335,11 +335,11 @@ func TestS3OpenOversizedEndClamped(t *testing.T) {
 	}
 }
 
-func TestS3OpenEmptyObject(t *testing.T) {
+func TestS3RangeEmptyObject(t *testing.T) {
 	st, _ := newTestStorage(t, &objectHandler{body: nil})
-	rc, err := st.Open(context.Background(), "key", nil)
+	rc, err := st.Range(context.Background(), "key", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(rc)
@@ -351,9 +351,9 @@ func TestS3OpenEmptyObject(t *testing.T) {
 	}
 }
 
-// TestS3OpenRejectedRangeClosesBody ensures the response body is closed when
+// TestS3RangeRejectedRangeClosesBody ensures the response body is closed when
 // a ranged response is rejected for missing Content-Range.
-func TestS3OpenRejectedRangeClosesBody(t *testing.T) {
+func TestS3RangeRejectedRangeClosesBody(t *testing.T) {
 	var closed int32
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -375,7 +375,7 @@ func TestS3OpenRejectedRangeClosesBody(t *testing.T) {
 	})
 	st := &S3Storage{bucket: "bkt", client: client}
 
-	_, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
+	_, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
 	if err == nil {
 		t.Fatal("expected rejection of range-ignoring response")
 	}
@@ -384,18 +384,18 @@ func TestS3OpenRejectedRangeClosesBody(t *testing.T) {
 	}
 }
 
-func TestS3OpenServerIgnoresRange(t *testing.T) {
+func TestS3RangeServerIgnoresRange(t *testing.T) {
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), ignore: true})
-	rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
 	if err == nil {
 		rc.Close()
 		t.Fatal("expected error when server ignores Range")
 	}
 }
 
-// TestS3OpenStreamsBeforeFullDownload proves Open returns after headers and
+// TestS3RangeStreamsBeforeFullDownload proves Range returns after headers and
 // the first bytes are readable while the rest of the body is still in flight.
-func TestS3OpenStreamsBeforeFullDownload(t *testing.T) {
+func TestS3RangeStreamsBeforeFullDownload(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Range", "bytes 0-9/10")
@@ -425,7 +425,7 @@ func TestS3OpenStreamsBeforeFullDownload(t *testing.T) {
 	}
 	opened := make(chan res, 1)
 	go func() {
-		rc, err := st.Open(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
+		rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
 		opened <- res{rc, err}
 	}()
 
@@ -433,11 +433,11 @@ func TestS3OpenStreamsBeforeFullDownload(t *testing.T) {
 	select {
 	case r := <-opened:
 		if r.err != nil {
-			t.Fatalf("Open: %v", r.err)
+			t.Fatalf("Range: %v", r.err)
 		}
 		rc = r.rc
 	case <-time.After(5 * time.Second):
-		t.Fatal("Open blocked until full body downloaded")
+		t.Fatal("Range blocked until full body downloaded")
 	}
 	defer rc.Close()
 

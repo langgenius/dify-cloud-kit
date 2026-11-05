@@ -62,11 +62,11 @@ func (r ByteRange) HTTPRange() (string, error) {
 // cancelling ctx aborts the request and subsequent reads.
 type StreamingOSS interface {
 	OSS
-	// Open returns a reader over the object stored at key. byteRange may be
+	// Range returns a reader over the object stored at key. byteRange may be
 	// nil to request the whole object. An invalid range fails with
 	// ErrInvalidRange before any I/O; a range outside the object fails with
 	// ErrRangeNotSatisfiable.
-	Open(ctx context.Context, key string, byteRange *ByteRange) (io.ReadCloser, error)
+	Range(ctx context.Context, key string, byteRange *ByteRange) (io.ReadCloser, error)
 }
 
 // isNilOSS reports whether store is nil, including a nil pointer inside a
@@ -84,7 +84,7 @@ func isNilOSS(store OSS) bool {
 }
 
 // SupportsStreaming reports whether store implements StreamingOSS, i.e.
-// supports both full-object and ranged streaming reads via Open. A nil store
+// supports both full-object and ranged streaming reads via Range. A nil store
 // reports false.
 func SupportsStreaming(store OSS) bool {
 	if isNilOSS(store) {
@@ -106,7 +106,7 @@ func OpenStream(ctx context.Context, store OSS, key string, byteRange *ByteRange
 	if !ok {
 		return nil, fmt.Errorf("%w: %T", ErrStreamingNotSupported, store)
 	}
-	return streamer.Open(ctx, key, byteRange)
+	return streamer.Range(ctx, key, byteRange)
 }
 
 // contentRange is a strictly parsed HTTP Content-Range value

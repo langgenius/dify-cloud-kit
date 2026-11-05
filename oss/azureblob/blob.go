@@ -63,7 +63,7 @@ func (a *AzureBlobStorage) Save(key string, data []byte) error {
 }
 
 func (a *AzureBlobStorage) Load(key string) ([]byte, error) {
-	reader, err := a.Open(context.Background(), key, nil)
+	reader, err := a.Range(context.Background(), key, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (a *AzureBlobStorage) Load(key string) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-func (a *AzureBlobStorage) Open(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+func (a *AzureBlobStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
 	options := &azblob.DownloadStreamOptions{}
 	if byteRange != nil {
 		if _, err := byteRange.HTTPRange(); err != nil {

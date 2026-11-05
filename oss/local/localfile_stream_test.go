@@ -29,21 +29,21 @@ func writeFile(t *testing.T, st *LocalStorage, key string, data []byte) {
 	}
 }
 
-func openRange(t *testing.T, st *LocalStorage, key string, r *oss.ByteRange) io.ReadCloser {
+func rangeReader(t *testing.T, st *LocalStorage, key string, r *oss.ByteRange) io.ReadCloser {
 	t.Helper()
-	rc, err := st.Open(context.Background(), key, r)
+	rc, err := st.Range(context.Background(), key, r)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	t.Cleanup(func() { rc.Close() })
 	return rc
 }
 
-func TestLocalOpenFull(t *testing.T) {
+func TestLocalRangeFull(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "a/b.bin", []byte("hello world"))
 
-	rc := openRange(t, st, "a/b.bin", nil)
+	rc := rangeReader(t, st, "a/b.bin", nil)
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -53,11 +53,11 @@ func TestLocalOpenFull(t *testing.T) {
 	}
 }
 
-func TestLocalOpenFullEmptyFile(t *testing.T) {
+func TestLocalRangeFullEmptyFile(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "empty", nil)
 
-	rc := openRange(t, st, "empty", nil)
+	rc := rangeReader(t, st, "empty", nil)
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -67,11 +67,11 @@ func TestLocalOpenFullEmptyFile(t *testing.T) {
 	}
 }
 
-func TestLocalOpenBounded(t *testing.T) {
+func TestLocalRangeBounded(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("0123456789"))
 
-	rc := openRange(t, st, "f", &oss.ByteRange{Offset: 2, Length: 4})
+	rc := rangeReader(t, st, "f", &oss.ByteRange{Offset: 2, Length: 4})
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -81,11 +81,11 @@ func TestLocalOpenBounded(t *testing.T) {
 	}
 }
 
-func TestLocalOpenToEOF(t *testing.T) {
+func TestLocalRangeToEOF(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("0123456789"))
 
-	rc := openRange(t, st, "f", &oss.ByteRange{Offset: 7, Length: -1})
+	rc := rangeReader(t, st, "f", &oss.ByteRange{Offset: 7, Length: -1})
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -95,12 +95,12 @@ func TestLocalOpenToEOF(t *testing.T) {
 	}
 }
 
-func TestLocalOpenClampedEnd(t *testing.T) {
+func TestLocalRangeClampedEnd(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("0123456789"))
 
 	// Length extends past end of file; only remaining bytes come back.
-	rc := openRange(t, st, "f", &oss.ByteRange{Offset: 8, Length: 100})
+	rc := rangeReader(t, st, "f", &oss.ByteRange{Offset: 8, Length: 100})
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -110,13 +110,13 @@ func TestLocalOpenClampedEnd(t *testing.T) {
 	}
 }
 
-func TestLocalOpenHugeLengthClamped(t *testing.T) {
+func TestLocalRangeHugeLengthClamped(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("0123456789"))
 
 	// Length is a valid inclusive HTTP range (end = MaxInt64); the local
 	// clamp must not overflow computing offset+length.
-	rc := openRange(t, st, "f", &oss.ByteRange{Offset: 1, Length: math.MaxInt64})
+	rc := rangeReader(t, st, "f", &oss.ByteRange{Offset: 1, Length: math.MaxInt64})
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -126,14 +126,14 @@ func TestLocalOpenHugeLengthClamped(t *testing.T) {
 	}
 }
 
-func TestLocalOpenMissing(t *testing.T) {
+func TestLocalRangeMissing(t *testing.T) {
 	st := newTestStorage(t)
-	if _, err := st.Open(context.Background(), "nope", nil); err == nil {
+	if _, err := st.Range(context.Background(), "nope", nil); err == nil {
 		t.Fatal("expected error for missing key")
 	}
 }
 
-func TestLocalOpenUnsatisfiable(t *testing.T) {
+func TestLocalRangeUnsatisfiable(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("0123456789"))
 	writeFile(t, st, "empty", nil)
@@ -148,13 +148,13 @@ func TestLocalOpenUnsatisfiable(t *testing.T) {
 		{"empty", oss.ByteRange{Offset: 0, Length: 1}}, // empty file
 		{"empty", oss.ByteRange{Offset: 0, Length: -1}},
 	} {
-		if _, err := st.Open(context.Background(), c.key, &c.r); !errors.Is(err, oss.ErrRangeNotSatisfiable) {
+		if _, err := st.Range(context.Background(), c.key, &c.r); !errors.Is(err, oss.ErrRangeNotSatisfiable) {
 			t.Fatalf("key=%s range=%+v: expected ErrRangeNotSatisfiable, got %v", c.key, c.r, err)
 		}
 	}
 }
 
-func TestLocalOpenInvalidRange(t *testing.T) {
+func TestLocalRangeInvalidRange(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("0123456789"))
 
@@ -163,31 +163,31 @@ func TestLocalOpenInvalidRange(t *testing.T) {
 		{Offset: 0, Length: 0},
 		{Offset: 0, Length: -2},
 	} {
-		if _, err := st.Open(context.Background(), "f", &r); !errors.Is(err, oss.ErrInvalidRange) {
+		if _, err := st.Range(context.Background(), "f", &r); !errors.Is(err, oss.ErrInvalidRange) {
 			t.Fatalf("range=%+v: expected ErrInvalidRange, got %v", r, err)
 		}
 	}
 }
 
-func TestLocalOpenCanceledBefore(t *testing.T) {
+func TestLocalRangeCanceledBefore(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("0123456789"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := st.Open(ctx, "f", nil); err == nil {
+	if _, err := st.Range(ctx, "f", nil); err == nil {
 		t.Fatal("expected context error")
 	}
 }
 
-func TestLocalOpenCanceledDuringRead(t *testing.T) {
+func TestLocalRangeCanceledDuringRead(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("0123456789"))
 
 	ctx, cancel := context.WithCancel(context.Background())
-	rc, err := st.Open(ctx, "f", nil)
+	rc, err := st.Range(ctx, "f", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 
@@ -208,13 +208,13 @@ func TestLocalOpenCanceledDuringRead(t *testing.T) {
 	}
 }
 
-func TestLocalOpenClosedResource(t *testing.T) {
+func TestLocalRangeClosedResource(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("0123456789"))
 
-	rc, err := st.Open(context.Background(), "f", nil)
+	rc, err := st.Range(context.Background(), "f", nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
 	if err := rc.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -224,7 +224,7 @@ func TestLocalOpenClosedResource(t *testing.T) {
 	}
 }
 
-func TestLocalOpenLoadStillWorks(t *testing.T) {
+func TestLocalRangeLoadStillWorks(t *testing.T) {
 	st := newTestStorage(t)
 	writeFile(t, st, "f", []byte("payload"))
 	data, err := st.Load("f")
