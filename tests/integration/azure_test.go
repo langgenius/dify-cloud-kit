@@ -35,6 +35,21 @@ func TestAzureIntegrationStreaming(t *testing.T) {
 	emptyKey := "empty.bin"
 	containerCreated := false
 
+	// Build the store before the container exists: the constructor must not
+	// require or create it.
+	store, err := factory.Load("azure_blob", oss.OSSArgs{
+		AzureBlob: &oss.AzureBlob{
+			ConnectionString: azuriteConnStr,
+			ContainerName:    container,
+		},
+	})
+	if err != nil {
+		t.Fatalf("factory.Load azure_blob: %v", err)
+	}
+	if !oss.SupportsPrepare(store) {
+		t.Fatal("azure_blob does not report preparation support")
+	}
+
 	client, err := azblob.NewClientFromConnectionString(azuriteConnStr, nil)
 	if err != nil {
 		t.Fatalf("NewClientFromConnectionString: %v", err)
@@ -56,11 +71,32 @@ func TestAzureIntegrationStreaming(t *testing.T) {
 		}
 	})
 
-	if _, err := client.CreateContainer(ctx, container, nil); err != nil {
-		t.Fatalf("CreateContainer: %v", err)
+	// Prepare is the production entry point for resource creation and must
+	// be idempotent.
+	if err := oss.Prepare(ctx, store); err != nil {
+		t.Fatalf("Prepare: %v", err)
 	}
 	containerCreated = true
-	t.Logf("created container %s on %s", container, azuriteEndpoint)
+	t.Logf("prepared container %s on %s", container, azuriteEndpoint)
+
+	// A second call and concurrent calls must all succeed on the already
+	// existing container.
+	if err := oss.Prepare(ctx, store); err != nil {
+		t.Fatalf("second Prepare: %v", err)
+	}
+	prepareErrs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		go func() {
+			c, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			prepareErrs <- oss.Prepare(c, store)
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		if err := <-prepareErrs; err != nil {
+			t.Fatalf("concurrent Prepare: %v", err)
+		}
+	}
 
 	fixture := writeFixture(t, objectSize)
 	f, err := os.Open(fixture)
@@ -73,16 +109,6 @@ func TestAzureIntegrationStreaming(t *testing.T) {
 	}
 	if _, err := client.UploadStream(ctx, container, emptyKey, emptyReader{}, nil); err != nil {
 		t.Fatalf("UploadStream empty: %v", err)
-	}
-
-	store, err := factory.Load("azure_blob", oss.OSSArgs{
-		AzureBlob: &oss.AzureBlob{
-			ConnectionString: azuriteConnStr,
-			ContainerName:    container,
-		},
-	})
-	if err != nil {
-		t.Fatalf("factory.Load azure_blob: %v", err)
 	}
 
 	runStreamingChecks(t, store, objKey, emptyKey)

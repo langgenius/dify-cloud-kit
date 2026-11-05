@@ -12,10 +12,14 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/langgenius/dify-cloud-kit/oss"
 )
 
-var _ oss.StreamingOSS = (*AzureBlobStorage)(nil)
+var (
+	_ oss.StreamingOSS = (*AzureBlobStorage)(nil)
+	_ oss.Preparer     = (*AzureBlobStorage)(nil)
+)
 
 type AzureBlobStorage struct {
 	client        *azblob.Client
@@ -55,6 +59,23 @@ func NewAzureBlobStorage(args oss.OSSArgs) (oss.OSS, error) {
 		client:        client,
 		containerName: containerName,
 	}, nil
+}
+
+// Prepare creates the configured container in the storage account if it does
+// not exist. It is idempotent: ContainerAlreadyExists is a success, and every
+// other error is returned to the caller. It is never called implicitly.
+func (a *AzureBlobStorage) Prepare(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := a.client.CreateContainer(ctx, a.containerName, nil)
+	if err == nil {
+		return nil
+	}
+	if bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
+		return nil
+	}
+	return fmt.Errorf("failed to prepare container %q: %w", a.containerName, err)
 }
 
 func (a *AzureBlobStorage) Save(key string, data []byte) error {

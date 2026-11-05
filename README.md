@@ -206,6 +206,38 @@ Some parts of the code in this project originate from [dify-plugin-daemon](https
 | Tencent COS    |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-plugin-daemon/pull/97|
 | Volcengine TOS |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-cloud-kit/pull/2|
 
+## 🛠️ Explicit Preparation
+
+Some backends can create their configured storage resource on demand via the
+optional `oss.Preparer` capability interface:
+
+```go
+type Preparer interface {
+    Prepare(ctx context.Context) error
+}
+```
+
+`Prepare` is **idempotent** and is only ever invoked explicitly — never by
+constructors or read/write methods, so read-only clients can simply opt out.
+Check support and call it at deployment/startup time:
+
+```go
+if !oss.SupportsPrepare(store) {
+    // backend does not (yet) implement Preparer
+}
+err := oss.Prepare(ctx, store)
+if errors.Is(err, oss.ErrPrepareNotSupported) {
+    // unsupported backend
+}
+```
+
+Currently only **Azure Blob** implements `Preparer`: it creates the
+configured container in the existing storage account (requires create
+permission). `ContainerAlreadyExists` is treated as success; every other
+error — 403, other 409 codes, 5xx, network, cancellation — is returned to the
+caller. Other providers do not implement `Preparer` yet (the legacy S3
+constructor's ensure-bucket behavior is unchanged and unrelated).
+
 ## 🧩 Integration Tests (Emulators)
 
 Hermetic integration tests run the streaming `OpenStream` API against local
