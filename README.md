@@ -205,3 +205,44 @@ Some parts of the code in this project originate from [dify-plugin-daemon](https
 | AWS S3         |[Yeuoly](https://github.com/Yeuoly)|https://github.com/langgenius/dify-plugin-daemon/commit/9ad9d7d4de1d123956ab07955e541bc4053e5170|
 | Tencent COS    |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-plugin-daemon/pull/97|
 | Volcengine TOS |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-cloud-kit/pull/2|
+
+## 🧩 Integration Tests (Emulators)
+
+Hermetic integration tests run the streaming `OpenStream` API against local
+emulators — **no real cloud credentials or accounts required**:
+
+| Emulator  | Image                                          | Endpoint                    |
+|-----------|------------------------------------------------|-----------------------------|
+| LocalStack| `localstack/localstack:4.0.3` (S3 only)        | `http://127.0.0.1:14566`    |
+| Azurite   | `mcr.microsoft.com/azure-storage/azurite:3.35.0` (blob) | `http://127.0.0.1:11000` |
+
+### Make targets
+
+```bash
+make integration-up      # start the ephemeral compose project and wait for health
+make test-integration    # up + CLOUDKIT_INTEGRATION=1 go test -race ./tests/integration
+make integration-down    # stop and remove the compose project
+```
+
+`test-integration` leaves services running for fast reruns; use
+`integration-down` when finished. Tests create uniquely named
+buckets/containers and delete only resources they created. The suite is
+gated on `CLOUDKIT_INTEGRATION=1` — a plain `go test ./...` skips it.
+
+### CI
+
+`.github/workflows/integration.yml` runs `make test-integration` on every
+pull request, push to `main`, and manual dispatch ("Storage Integration"
+check). No secrets are needed; emulator container logs are uploaded as a
+workflow artifact on failure and services are always torn down at the end.
+
+### Scope
+
+- Offline unit tests live under `./oss/...` and run with a plain `go test`.
+- `tests/oss/` is the legacy real-cloud suite (requires credentials) and is
+  not part of the hermetic integration gate.
+- A true-cloud opt-in test (`oss/azureblob/blob_live_test.go`, requires
+  `CLOUDKIT_AZURE_LIVE_*` env vars and an existing blob) is separate.
+
+Note: this suite depends on the streaming `OpenStream`/`StreamingOSS` API and
+must rebase onto the streaming feature branch once it lands.

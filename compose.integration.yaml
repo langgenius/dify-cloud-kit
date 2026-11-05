@@ -1,0 +1,30 @@
+name: cloudkit-integration
+
+# Ephemeral object-storage emulators for `make test-integration`.
+# Loopback-only ports, no volumes, no credentials, no cloud access.
+
+services:
+  localstack:
+    image: localstack/localstack:4.0.3
+    environment:
+      SERVICES: s3
+    ports:
+      - "127.0.0.1:14566:4566"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:4566/_localstack/health >/dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    command: azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+    ports:
+      - "127.0.0.1:11000:10000"
+    healthcheck:
+      # Azurite answers an anonymous root request with 400/403 once the
+      # blob service is up; only a connection failure means "not ready".
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:10000/',r=>process.exit([400,403].includes(r.statusCode)?0:1)).on('error',()=>process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
