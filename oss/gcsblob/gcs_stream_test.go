@@ -226,6 +226,18 @@ func TestGCSRangeEmptyObject(t *testing.T) {
 	}
 }
 
+func TestGCSRangeEmptyObjectToEOFSatisfiedAs416(t *testing.T) {
+	// Some emulators answer an open-ended range on an empty object with
+	// 200 + empty body instead of 416; the library must still report
+	// ErrRangeNotSatisfiable.
+	st, _ := newTestStorage(t, &objectHandler{body: nil, ignore: true})
+
+	_, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
+	if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
+		t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
+	}
+}
+
 func TestGCSRangeServerIgnoresRange(t *testing.T) {
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), ignore: true})
 

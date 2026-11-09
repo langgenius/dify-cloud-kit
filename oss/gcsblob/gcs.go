@@ -129,6 +129,13 @@ func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *o
 	}
 
 	if byteRange != nil {
+		// An empty object cannot satisfy any range request. Most servers
+		// answer 416, but some (e.g. fake-gcs-server) return 200 with an
+		// empty body for open-ended ranges; reject it either way.
+		if rc.Attrs.Size == 0 {
+			rc.Close()
+			return nil, oss.ErrRangeNotSatisfiable
+		}
 		// The GCS SDK enforces that a range starting at a non-zero offset
 		// returns 206; reconstruct the Content-Range from the reader
 		// attributes and verify it the same way as other providers so a

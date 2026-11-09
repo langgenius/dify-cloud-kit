@@ -48,6 +48,12 @@ func TestS3IntegrationStreaming(t *testing.T) {
 	}
 	t.Logf("prepared bucket %s on %s", bucket, localstackEndpoint)
 
+	t.Run("repeated Prepare", func(t *testing.T) {
+		if err := oss.Prepare(ctx, store); err != nil {
+			t.Fatalf("second Prepare: %v", err)
+		}
+	})
+
 	t.Cleanup(func() {
 		for _, k := range []string{objKey, emptyKey} {
 			if err := store.Delete(k); err != nil {

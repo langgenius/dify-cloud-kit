@@ -135,6 +135,15 @@ func runStreamingChecks(t *testing.T, store oss.OSS, objKey, emptyKey string) {
 	t.Run("clamped end", func(t *testing.T) {
 		verify(t, objKey, &oss.ByteRange{Offset: objectSize - 8, Length: 100}, objectSize-8, 8)
 	})
+	t.Run("single byte", func(t *testing.T) {
+		verify(t, objKey, &oss.ByteRange{Offset: 2, Length: 1}, 2, 1)
+	})
+	t.Run("last byte bounded", func(t *testing.T) {
+		verify(t, objKey, &oss.ByteRange{Offset: objectSize - 1, Length: 1}, objectSize-1, 1)
+	})
+	t.Run("last byte to EOF", func(t *testing.T) {
+		verify(t, objKey, &oss.ByteRange{Offset: objectSize - 1, Length: -1}, objectSize-1, 1)
+	})
 	t.Run("empty object", func(t *testing.T) { verify(t, emptyKey, nil, 0, 0) })
 
 	t.Run("empty object ranged unsatisfiable", func(t *testing.T) {
@@ -150,6 +159,30 @@ func runStreamingChecks(t *testing.T, store oss.OSS, objKey, emptyKey string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		_, err := oss.OpenStream(ctx, store, objKey, &oss.ByteRange{Offset: objectSize, Length: 1})
+		if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
+			t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
+		}
+	})
+
+	t.Run("empty object to EOF unsatisfiable", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		rc, err := oss.OpenStream(ctx, store, emptyKey, &oss.ByteRange{Offset: 0, Length: -1})
+		if rc != nil {
+			rc.Close()
+		}
+		if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
+			t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
+		}
+	})
+
+	t.Run("offset equals size to EOF unsatisfiable", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		rc, err := oss.OpenStream(ctx, store, objKey, &oss.ByteRange{Offset: objectSize, Length: -1})
+		if rc != nil {
+			rc.Close()
+		}
 		if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
 			t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
 		}
