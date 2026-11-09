@@ -112,14 +112,13 @@ Semantics:
 | Azure Blob | ✅             | `DownloadStreamOptions.Range`, `NewRetryReader` resumes interrupted reads |
 | Google GCS | ✅             | `NewRangeReader`, 416 mapped to `ErrRangeNotSatisfiable` |
 | Tencent COS| ✅             | `ObjectGetOptions.Range`, body streamed  |
-| Huawei OBS | ✅             | `GetObjectInput.RangeStart/RangeEnd`; `Length == -1` resolves the size with a HEAD first (the SDK cannot emit `bytes=N-`) |
+| Huawei OBS | ✅             | Range header sent verbatim via `WithCustomHeader` (the SDK's `RangeStart/RangeEnd` cannot express `bytes=N-` or `bytes=N-N`) |
 | Volcengine TOS| ✅          | `GetObjectV2Input.Range`, body streamed |
 
-Huawei OBS caveat: the SDK only emits `bytes=start-end` when `end > start`,
-so a single-byte range (`Length == 1`) cannot be expressed. Such requests
-still fail loudly (Content-Range verification) instead of returning wrong
-data, and an unsatisfiable single-byte range still maps to
-`ErrRangeNotSatisfiable` via a size check.
+Huawei OBS caveat: the SDK has no per-request context. Cancelling `ctx`
+makes `Range` return `ctx.Err()` immediately and aborts an in-progress body
+read, but a request still waiting for response headers is only torn down by
+the SDK's own response-header timeout.
 
 ### Capability detection
 
@@ -245,14 +244,18 @@ if errors.Is(err, oss.ErrPrepareNotSupported) {
 - **Azure Blob** — creates the configured container in the existing storage
   account (requires create permission). `ContainerAlreadyExists` is treated
   as success.
-- **Google GCS** — creates the configured bucket, requiring
-  `GoogleCloudStorage.Project`. A 409 Conflict (bucket already exists) is
-  treated as success.
-- **AWS S3** — creates the configured bucket when missing. `NotFound` /
-  `NoSuchBucket` on the bucket probe triggers creation;
-  `BucketAlreadyOwnedByYou` / `BucketAlreadyExists` are treated as success.
-  (The legacy constructor's ensure-bucket behavior is unchanged and
-  unrelated.)
+- **Google GCS** — requires `GoogleCloudStorage.Project`. Probes access by
+  listing at most one object (needs only `storage.objects.list`) and creates
+  the bucket only when it does not exist. A 409 Conflict on create is a
+  success only if the bucket is then accessible; a name owned by another
+  project is an error.
+- **AWS S3** — `NotFound` / `NoSuchBucket` on the bucket probe triggers
+  creation, with `LocationConstraint` set from the region outside
+  `us-east-1` (AWS only; S3-compatible endpoints keep their default).
+  `BucketAlreadyOwnedByYou` is a success; `BucketAlreadyExists` is a success
+  only if the bucket is then accessible, otherwise the name belongs to
+  another account and an error is returned. (The legacy constructor still
+  ensures the bucket at load time.)
 
 Every other error — 403, other 409 codes, 5xx, network, cancellation — is
 returned to the caller. Remaining providers (Aliyun, Tencent COS, Huawei

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/huaweicloud/huaweicloud-sdk-go-obs/obs"
 	"github.com/langgenius/dify-cloud-kit/oss"
@@ -147,52 +148,152 @@ func TestOBSRangeOpenEnded(t *testing.T) {
 	if string(data) != "456789" {
 		t.Fatalf("got %q", data)
 	}
-	// OBS can only express bounded ranges; open-ended is resolved via a HEAD
-	// first, so the GET must carry the computed last byte.
-	if rangeHdr != "bytes=4-9" {
+	if rangeHdr != "bytes=4-" {
 		t.Fatalf("got Range header %q", rangeHdr)
 	}
 }
 
-func TestOBSRangeOpenEndedUnsatisfiable(t *testing.T) {
-	var requests int32
-	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), requests: &requests})
+func TestOBSRangeSingleByteForms(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		r       oss.ByteRange
+		want    string
+		wantHdr string
+	}{
+		{"single byte", "0123456789", oss.ByteRange{Offset: 2, Length: 1}, "2", "bytes=2-2"},
+		{"last byte bounded", "0123456789", oss.ByteRange{Offset: 9, Length: 1}, "9", "bytes=9-9"},
+		{"last byte to EOF", "0123456789", oss.ByteRange{Offset: 9, Length: -1}, "9", "bytes=9-"},
+		{"one-byte object to EOF", "x", oss.ByteRange{Offset: 0, Length: -1}, "x", "bytes=0-"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var rangeHdr string
+			st, _ := newTestStorage(t, &objectHandler{body: []byte(tc.body), rangeHdr: &rangeHdr})
 
-	// offset == size: detected locally after the HEAD, no GET is issued.
-	_, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 10, Length: -1})
-	if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
-		t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
-	}
-	if requests != 1 {
-		t.Fatalf("expected a single HEAD request, got %d", requests)
+			rc, err := st.Range(context.Background(), "key", &tc.r)
+			if err != nil {
+				t.Fatalf("Range: %v", err)
+			}
+			defer rc.Close()
+			data, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if string(data) != tc.want {
+				t.Fatalf("got %q, want %q", data, tc.want)
+			}
+			if rangeHdr != tc.wantHdr {
+				t.Fatalf("got Range header %q, want %q", rangeHdr, tc.wantHdr)
+			}
+		})
 	}
 }
 
-func TestOBSRangeSingleByteUnsatisfiable(t *testing.T) {
-	var requests int32
-	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), requests: &requests})
+func TestOBSRangeUnsatisfiableSingleRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body []byte
+		r    oss.ByteRange
+	}{
+		{"offset equals size to EOF", []byte("0123456789"), oss.ByteRange{Offset: 10, Length: -1}},
+		{"offset equals size single byte", []byte("0123456789"), oss.ByteRange{Offset: 10, Length: 1}},
+		{"empty object to EOF", nil, oss.ByteRange{Offset: 0, Length: -1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests int32
+			st, _ := newTestStorage(t, &objectHandler{body: tc.body, requests: &requests})
 
-	// A single-byte range cannot be expressed by the SDK (it only sends
-	// "bytes=start-end" when end > start); the size check must still map
-	// offset >= size to ErrRangeNotSatisfiable.
-	_, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 10, Length: 1})
-	if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
-		t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
-	}
-	if requests != 1 {
-		t.Fatalf("expected a single HEAD request, got %d", requests)
+			_, err := st.Range(context.Background(), "key", &tc.r)
+			if !errors.Is(err, oss.ErrRangeNotSatisfiable) {
+				t.Fatalf("expected ErrRangeNotSatisfiable, got %v", err)
+			}
+			if requests != 1 {
+				t.Fatalf("expected a single GET request, got %d", requests)
+			}
+		})
 	}
 }
 
-func TestOBSRangeSingleByteSatisfiableFailsLoudly(t *testing.T) {
-	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789")})
+// newBlockingStorage serves a handler that blocks until released or the
+// client disconnects. With sendHeaders it first flushes a partial 200
+// response so the block happens during the body read; otherwise it blocks
+// before sending headers. The handler is released before the server closes,
+// because an abandoned OBS request is only torn down by the SDK's own
+// response-header timeout.
+func newBlockingStorage(t *testing.T, sendHeaders bool) (*HuaweiOBSStorage, chan struct{}) {
+	t.Helper()
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	st, _ := newTestStorage(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		if sendHeaders {
+			w.Header().Set("Content-Length", "10")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("abc"))
+			w.(http.Flusher).Flush()
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() { close(release) })
+	return st, entered
+}
 
-	// Satisfiable single-byte ranges are not expressible via the OBS SDK:
-	// the GET is issued without a Range header and the full object comes
-	// back, which fails Content-Range verification instead of returning
-	// wrong data.
-	if _, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 1}); err == nil {
-		t.Fatal("expected an error for a single-byte range")
+func TestOBSRangeCanceledInflight(t *testing.T) {
+	st, entered := newBlockingStorage(t, false)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := st.Range(ctx, "key", nil)
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never received request")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Range did not return after cancel")
+	}
+}
+
+func TestOBSRangeCanceledDuringBodyRead(t *testing.T) {
+	st, _ := newBlockingStorage(t, true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rc, err := st.Range(ctx, "key", nil)
+	if err != nil {
+		t.Fatalf("Range: %v", err)
+	}
+	defer rc.Close()
+
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := io.ReadFull(rc, make([]byte, 10))
+		readDone <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-readDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Read did not return after cancel")
 	}
 }
 

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -138,6 +140,48 @@ func TestS3PrepareBucketAlreadyExistsAccessibleTolerated(t *testing.T) {
 
 	if err := st.Prepare(context.Background()); err != nil {
 		t.Fatalf("Prepare with accessible BucketAlreadyExists: %v", err)
+	}
+}
+
+func TestS3PrepareLocationConstraint(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		constraint string
+		want       string
+	}{
+		{"non-default region", "eu-west-1", "<LocationConstraint>eu-west-1</LocationConstraint>"},
+		{"default region", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var createBody string
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case http.MethodHead:
+					w.WriteHeader(http.StatusNotFound)
+				case http.MethodPut:
+					body, _ := io.ReadAll(r.Body)
+					createBody = string(body)
+					w.WriteHeader(http.StatusOK)
+				default:
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			})
+			st, _ := newTestStorage(t, handler)
+			st.locationConstraint = tc.constraint
+
+			if err := st.Prepare(context.Background()); err != nil {
+				t.Fatalf("Prepare: %v", err)
+			}
+			if tc.want == "" {
+				if createBody != "" {
+					t.Fatalf("expected empty create body, got %q", createBody)
+				}
+				return
+			}
+			if !strings.Contains(createBody, tc.want) {
+				t.Fatalf("create body %q does not contain %q", createBody, tc.want)
+			}
+		})
 	}
 }
 

@@ -79,9 +79,16 @@ func (h *HuaweiOBSStorage) Load(key string) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
+type getObjectResult struct {
+	output *obs.GetObjectOutput
+	err    error
+}
+
 func (h *HuaweiOBSStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+	rangeHeader := ""
 	if byteRange != nil {
-		if _, err := byteRange.HTTPRange(); err != nil {
+		var err error
+		if rangeHeader, err = byteRange.HTTPRange(); err != nil {
 			return nil, err
 		}
 	}
@@ -95,39 +102,43 @@ func (h *HuaweiOBSStorage) Range(ctx context.Context, key string, byteRange *oss
 			Key:    key,
 		},
 	}
-	if byteRange != nil {
-		input.RangeStart = byteRange.Offset
-		// The OBS SDK only emits "bytes=start-end" when end > start; it can
-		// neither express "bytes=start-" nor a single-byte range. Both cases
-		// resolve the object size first so an unsatisfiable range maps to
-		// ErrRangeNotSatisfiable instead of a silent full download.
-		if byteRange.Length == -1 || byteRange.Length == 1 {
-			size, err := h.objectSize(key)
-			if err != nil {
-				return nil, err
-			}
-			if byteRange.Offset >= size {
-				return nil, oss.ErrRangeNotSatisfiable
-			}
-			if byteRange.Length == -1 {
-				input.RangeEnd = size - 1
-			}
-			// Length == 1 keeps RangeEnd == RangeStart, so the SDK sends no
-			// Range header; the GET below then fails Content-Range
-			// verification loudly instead of returning wrong data.
+
+	// The OBS SDK takes no per-request context, so the GET runs in the
+	// background and is abandoned on cancellation; a response that still
+	// arrives afterwards is closed. The SDK's RangeStart/RangeEnd cannot
+	// express "bytes=N-" or "bytes=N-N", so the Range header is sent
+	// verbatim instead (custom headers are applied before signing).
+	done := make(chan getObjectResult, 1)
+	go func() {
+		var res getObjectResult
+		if rangeHeader == "" {
+			res.output, res.err = h.client.GetObject(input)
 		} else {
-			input.RangeEnd = byteRange.Offset + byteRange.Length - 1
+			res.output, res.err = h.client.GetObject(input, obs.WithCustomHeader("Range", rangeHeader))
 		}
+		done <- res
+	}()
+
+	var res getObjectResult
+	select {
+	case res = <-done:
+	case <-ctx.Done():
+		go func() {
+			if late := <-done; late.output != nil {
+				late.output.Body.Close()
+			}
+		}()
+		return nil, ctx.Err()
 	}
 
-	output, err := h.client.GetObject(input)
-	if err != nil {
+	if res.err != nil {
 		var apiErr obs.ObsError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		if errors.As(res.err, &apiErr) && apiErr.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 			return nil, oss.ErrRangeNotSatisfiable
 		}
-		return nil, err
+		return nil, res.err
 	}
+	output := res.output
 
 	if byteRange != nil {
 		contentRange := ""
@@ -141,21 +152,38 @@ func (h *HuaweiOBSStorage) Range(ctx context.Context, key string, byteRange *oss
 		}
 	}
 
-	return output.Body, nil
+	return newCtxBody(ctx, output.Body), nil
 }
 
-// objectSize resolves the object's content length via a HEAD request.
-func (h *HuaweiOBSStorage) objectSize(key string) (int64, error) {
-	attrs, err := h.client.GetAttribute(&obs.GetAttributeInput{
-		GetObjectMetadataInput: obs.GetObjectMetadataInput{
-			Bucket: h.bucket,
-			Key:    key,
-		},
-	})
-	if err != nil {
-		return 0, err
+// ctxBody closes the response body when ctx is done so a blocked Read
+// returns, and reports the context error instead of the close error.
+type ctxBody struct {
+	ctx  context.Context
+	body io.ReadCloser
+	stop func() bool
+}
+
+func newCtxBody(ctx context.Context, body io.ReadCloser) *ctxBody {
+	return &ctxBody{
+		ctx:  ctx,
+		body: body,
+		stop: context.AfterFunc(ctx, func() { body.Close() }),
 	}
-	return attrs.ContentLength, nil
+}
+
+func (b *ctxBody) Read(p []byte) (int, error) {
+	n, err := b.body.Read(p)
+	if err != nil && err != io.EOF {
+		if ctxErr := b.ctx.Err(); ctxErr != nil {
+			return n, ctxErr
+		}
+	}
+	return n, err
+}
+
+func (b *ctxBody) Close() error {
+	b.stop()
+	return b.body.Close()
 }
 
 func (h *HuaweiOBSStorage) Exists(key string) (bool, error) {
