@@ -1,7 +1,10 @@
 package huaweiobs
 
 import (
+	"context"
+	"errors"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -68,18 +71,92 @@ func (h *HuaweiOBSStorage) Save(key string, data []byte) error {
 }
 
 func (h *HuaweiOBSStorage) Load(key string) ([]byte, error) {
-	output, err := h.client.GetObject(&obs.GetObjectInput{
+	reader, err := h.Range(context.Background(), key, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	return io.ReadAll(reader)
+}
+
+func (h *HuaweiOBSStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+	if byteRange != nil {
+		if _, err := byteRange.HTTPRange(); err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	input := &obs.GetObjectInput{
+		GetObjectMetadataInput: obs.GetObjectMetadataInput{
+			Bucket: h.bucket,
+			Key:    key,
+		},
+	}
+	if byteRange != nil {
+		input.RangeStart = byteRange.Offset
+		// The OBS SDK only emits "bytes=start-end" when end > start; it can
+		// neither express "bytes=start-" nor a single-byte range. Both cases
+		// resolve the object size first so an unsatisfiable range maps to
+		// ErrRangeNotSatisfiable instead of a silent full download.
+		if byteRange.Length == -1 || byteRange.Length == 1 {
+			size, err := h.objectSize(key)
+			if err != nil {
+				return nil, err
+			}
+			if byteRange.Offset >= size {
+				return nil, oss.ErrRangeNotSatisfiable
+			}
+			if byteRange.Length == -1 {
+				input.RangeEnd = size - 1
+			}
+			// Length == 1 keeps RangeEnd == RangeStart, so the SDK sends no
+			// Range header; the GET below then fails Content-Range
+			// verification loudly instead of returning wrong data.
+		} else {
+			input.RangeEnd = byteRange.Offset + byteRange.Length - 1
+		}
+	}
+
+	output, err := h.client.GetObject(input)
+	if err != nil {
+		var apiErr obs.ObsError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			return nil, oss.ErrRangeNotSatisfiable
+		}
+		return nil, err
+	}
+
+	if byteRange != nil {
+		contentRange := ""
+		// The OBS SDK lower-cases response header keys.
+		if values := output.ResponseHeaders["content-range"]; len(values) > 0 {
+			contentRange = values[0]
+		}
+		if err := oss.VerifyContentRange(contentRange, byteRange); err != nil {
+			output.Body.Close()
+			return nil, err
+		}
+	}
+
+	return output.Body, nil
+}
+
+// objectSize resolves the object's content length via a HEAD request.
+func (h *HuaweiOBSStorage) objectSize(key string) (int64, error) {
+	attrs, err := h.client.GetAttribute(&obs.GetAttributeInput{
 		GetObjectMetadataInput: obs.GetObjectMetadataInput{
 			Bucket: h.bucket,
 			Key:    key,
 		},
 	})
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer output.Body.Close()
-
-	return io.ReadAll(output.Body)
+	return attrs.ContentLength, nil
 }
 
 func (h *HuaweiOBSStorage) Exists(key string) (bool, error) {

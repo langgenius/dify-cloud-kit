@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -274,6 +275,40 @@ func (s *S3Storage) State(key string) (oss.OSSState, error) {
 
 func (s *S3Storage) Type() string {
 	return oss.OSS_TYPE_S3
+}
+
+// Prepare creates the configured bucket if it does not exist. It is
+// idempotent: an already-existing bucket is a success, and every other error
+// is returned to the caller. It is never called implicitly. (The legacy
+// constructor additionally ensures the bucket at load time; Prepare is the
+// explicit capability for callers that want to control this.)
+func (s *S3Storage) Prepare(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(s.bucket),
+	})
+	if err == nil {
+		return nil
+	}
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) ||
+		(apiErr.ErrorCode() != "NotFound" && apiErr.ErrorCode() != "NoSuchBucket") {
+		return fmt.Errorf("failed to prepare bucket %q: %w", s.bucket, err)
+	}
+	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(s.bucket),
+	})
+	if err == nil {
+		return nil
+	}
+	var createErr smithy.APIError
+	if errors.As(err, &createErr) &&
+		(createErr.ErrorCode() == "BucketAlreadyOwnedByYou" || createErr.ErrorCode() == "BucketAlreadyExists") {
+		return nil
+	}
+	return fmt.Errorf("failed to prepare bucket %q: %w", s.bucket, err)
 }
 
 func ToPtr[T any](value T) *T {

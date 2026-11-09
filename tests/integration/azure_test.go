@@ -3,12 +3,9 @@ package integration
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/google/uuid"
 	"github.com/langgenius/dify-cloud-kit/oss"
 	"github.com/langgenius/dify-cloud-kit/oss/factory"
@@ -33,7 +30,6 @@ func TestAzureIntegrationStreaming(t *testing.T) {
 	container := fmt.Sprintf("cloudkit-it-%s", uuid.NewString())
 	objKey := "fixture.bin"
 	emptyKey := "empty.bin"
-	containerCreated := false
 
 	// Build the store before the container exists: the constructor must not
 	// require or create it.
@@ -50,24 +46,11 @@ func TestAzureIntegrationStreaming(t *testing.T) {
 		t.Fatal("azure_blob does not report preparation support")
 	}
 
-	client, err := azblob.NewClientFromConnectionString(azuriteConnStr, nil)
-	if err != nil {
-		t.Fatalf("NewClientFromConnectionString: %v", err)
-	}
-
 	t.Cleanup(func() {
-		if !containerCreated {
-			return
-		}
-		c, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
 		for _, k := range []string{objKey, emptyKey} {
-			if _, err := client.DeleteBlob(c, container, k, nil); err != nil {
-				t.Logf("cleanup DeleteBlob %s: %v", k, err)
+			if err := store.Delete(k); err != nil {
+				t.Logf("cleanup Delete %s: %v", k, err)
 			}
-		}
-		if _, err := client.DeleteContainer(c, container, nil); err != nil {
-			t.Logf("cleanup DeleteContainer: %v", err)
 		}
 	})
 
@@ -76,7 +59,6 @@ func TestAzureIntegrationStreaming(t *testing.T) {
 	if err := oss.Prepare(ctx, store); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	containerCreated = true
 	t.Logf("prepared container %s on %s", container, azuriteEndpoint)
 
 	// A second call and concurrent calls must all succeed on the already
@@ -98,23 +80,15 @@ func TestAzureIntegrationStreaming(t *testing.T) {
 		}
 	}
 
-	fixture := writeFixture(t, objectSize)
-	f, err := os.Open(fixture)
-	if err != nil {
-		t.Fatalf("open fixture: %v", err)
+	// Upload the fixtures through the library's own Save, then exercise the
+	// streaming and plain-object interfaces end to end.
+	if err := store.Save(objKey, fixtureBytes(objectSize)); err != nil {
+		t.Fatalf("Save fixture: %v", err)
 	}
-	defer f.Close()
-	if _, err := client.UploadStream(ctx, container, objKey, f, nil); err != nil {
-		t.Fatalf("UploadStream: %v", err)
-	}
-	if _, err := client.UploadStream(ctx, container, emptyKey, emptyReader{}, nil); err != nil {
-		t.Fatalf("UploadStream empty: %v", err)
+	if err := store.Save(emptyKey, nil); err != nil {
+		t.Fatalf("Save empty: %v", err)
 	}
 
 	runStreamingChecks(t, store, objKey, emptyKey)
+	runInterfaceChecks(t, store, objKey, emptyKey)
 }
-
-// emptyReader is a zero-length io.Reader.
-type emptyReader struct{}
-
-func (emptyReader) Read([]byte) (int, error) { return 0, io.EOF }

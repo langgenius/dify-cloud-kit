@@ -110,7 +110,16 @@ Semantics:
 | AWS S3     | ✅             | `GetObjectInput.Range`, body streamed     |
 | Aliyun OSS | ✅             | `NormalizedRange` + `RangeBehavior("standard")` |
 | Azure Blob | ✅             | `DownloadStreamOptions.Range`, `NewRetryReader` resumes interrupted reads |
-| Others     | ❌             | type assertion fails                      |
+| Google GCS | ✅             | `NewRangeReader`, 416 mapped to `ErrRangeNotSatisfiable` |
+| Tencent COS| ✅             | `ObjectGetOptions.Range`, body streamed  |
+| Huawei OBS | ✅             | `GetObjectInput.RangeStart/RangeEnd`; `Length == -1` resolves the size with a HEAD first (the SDK cannot emit `bytes=N-`) |
+| Volcengine TOS| ✅          | `GetObjectV2Input.Range`, body streamed |
+
+Huawei OBS caveat: the SDK only emits `bytes=start-end` when `end > start`,
+so a single-byte range (`Length == 1`) cannot be expressed. Such requests
+still fail loudly (Content-Range verification) instead of returning wrong
+data, and an unsatisfiable single-byte range still maps to
+`ErrRangeNotSatisfiable` via a size check.
 
 ### Capability detection
 
@@ -231,22 +240,37 @@ if errors.Is(err, oss.ErrPrepareNotSupported) {
 }
 ```
 
-Currently only **Azure Blob** implements `Preparer`: it creates the
-configured container in the existing storage account (requires create
-permission). `ContainerAlreadyExists` is treated as success; every other
-error — 403, other 409 codes, 5xx, network, cancellation — is returned to the
-caller. Other providers do not implement `Preparer` yet (the legacy S3
-constructor's ensure-bucket behavior is unchanged and unrelated).
+`Preparer` is currently implemented by:
+
+- **Azure Blob** — creates the configured container in the existing storage
+  account (requires create permission). `ContainerAlreadyExists` is treated
+  as success.
+- **Google GCS** — creates the configured bucket, requiring
+  `GoogleCloudStorage.Project`. A 409 Conflict (bucket already exists) is
+  treated as success.
+- **AWS S3** — creates the configured bucket when missing. `NotFound` /
+  `NoSuchBucket` on the bucket probe triggers creation;
+  `BucketAlreadyOwnedByYou` / `BucketAlreadyExists` are treated as success.
+  (The legacy constructor's ensure-bucket behavior is unchanged and
+  unrelated.)
+
+Every other error — 403, other 409 codes, 5xx, network, cancellation — is
+returned to the caller. Remaining providers (Aliyun, Tencent COS, Huawei
+OBS, Volcengine TOS) do not implement `Preparer` yet.
 
 ## 🧩 Integration Tests (Emulators)
 
-Hermetic integration tests run the streaming `OpenStream` API against local
-emulators — **no real cloud credentials or accounts required**:
+Hermetic integration tests exercise the **library's own interface** —
+`factory.Load`, `oss.Prepare`, `Save`, `Range`/`OpenStream`, `Load`,
+`Exists`, `State`, `Delete` — end to end against local emulators. No raw
+cloud SDK clients are used in the tests and **no real cloud credentials or
+accounts are required**:
 
 | Emulator  | Image                                          | Endpoint                    |
 |-----------|------------------------------------------------|-----------------------------|
 | LocalStack| `localstack/localstack:4.0.3` (S3 only)        | `http://127.0.0.1:14566`    |
 | Azurite   | `mcr.microsoft.com/azure-storage/azurite:3.35.0` (blob) | `http://127.0.0.1:11000` |
+| fake-gcs  | `fsouza/fake-gcs-server:1.56.1` (memory)       | `http://127.0.0.1:14443`    |
 
 ### Make targets
 
@@ -271,7 +295,13 @@ services are always torn down at the end.
 
 ### Scope
 
-- Offline unit tests live under `./oss/...` and run with a plain `go test`.
+- Offline unit tests live under `./oss/...` and run with a plain `go test`
+  (every provider that implements `Range` — Local, S3, Aliyun, Azure, GCS,
+  Tencent COS, Huawei OBS, Volcengine TOS — has mock-server coverage).
+- Emulator-backed integration tests cover S3 (LocalStack), Azure Blob
+  (Azurite) and GCS (fake-gcs-server). Tencent COS, Huawei OBS and
+  Volcengine TOS have no official emulator, so they are covered by the
+  offline mock-server suite only.
 - `tests/oss/` is the legacy real-cloud suite (requires credentials) and is
   not part of the hermetic integration gate.
 - A true-cloud opt-in test (`oss/azureblob/blob_live_test.go`, requires

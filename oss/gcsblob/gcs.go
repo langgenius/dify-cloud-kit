@@ -4,18 +4,22 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"cloud.google.com/go/storage"
 	"github.com/langgenius/dify-cloud-kit/oss"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
 type GoogleCloudStorage struct {
-	bucket string
-	client *storage.Client
+	bucket  string
+	project string
+	client  *storage.Client
 }
 
 func NewGoogleCloudStorage(args oss.OSSArgs) (oss.OSS, error) {
@@ -47,9 +51,31 @@ func NewGoogleCloudStorage(args oss.OSSArgs) (oss.OSS, error) {
 		}
 	}
 	return &GoogleCloudStorage{
-		bucket: bucket,
-		client: client,
+		bucket:  bucket,
+		project: args.GoogleCloudStorage.Project,
+		client:  client,
 	}, nil
+}
+
+// Prepare creates the configured bucket if it does not exist. It is
+// idempotent: a 409 Conflict (bucket already exists) is a success, and every
+// other error is returned to the caller. It is never called implicitly.
+func (g *GoogleCloudStorage) Prepare(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if g.project == "" {
+		return fmt.Errorf("gcs: cannot prepare bucket %q without a project ID (set GoogleCloudStorage.Project)", g.bucket)
+	}
+	err := g.client.Bucket(g.bucket).Create(ctx, g.project, nil)
+	if err == nil {
+		return nil
+	}
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict {
+		return nil
+	}
+	return fmt.Errorf("failed to prepare bucket %q: %w", g.bucket, err)
 }
 
 func (g *GoogleCloudStorage) Save(key string, data []byte) error {
@@ -64,17 +90,59 @@ func (g *GoogleCloudStorage) Save(key string, data []byte) error {
 }
 
 func (g *GoogleCloudStorage) Load(key string) ([]byte, error) {
-	rc, err := g.client.Bucket(g.bucket).Object(key).NewReader(context.Background())
+	reader, err := g.Range(context.Background(), key, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
+	defer reader.Close()
 
-	data, err := io.ReadAll(rc)
-	if err != nil {
+	return io.ReadAll(reader)
+}
+
+func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+	if byteRange != nil {
+		if _, err := byteRange.HTTPRange(); err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return data, nil
+
+	obj := g.client.Bucket(g.bucket).Object(key)
+
+	offset, length := int64(0), int64(-1)
+	if byteRange != nil {
+		offset, length = byteRange.Offset, byteRange.Length
+	}
+
+	// NewRangeReader reads at most length bytes starting at offset; a
+	// negative length reads to the end of the object. Offsets beyond the
+	// end of the object fail with a 416 error.
+	rc, err := obj.NewRangeReader(ctx, offset, length)
+	if err != nil {
+		var apiErr *googleapi.Error
+		if errors.As(err, &apiErr) && apiErr.Code == http.StatusRequestedRangeNotSatisfiable {
+			return nil, oss.ErrRangeNotSatisfiable
+		}
+		return nil, err
+	}
+
+	if byteRange != nil {
+		// The GCS SDK enforces that a range starting at a non-zero offset
+		// returns 206; reconstruct the Content-Range from the reader
+		// attributes and verify it the same way as other providers so a
+		// server that ignores the range (e.g. decompressive transcoding)
+		// fails loudly instead of streaming the whole object.
+		contentRange := fmt.Sprintf("bytes %d-%d/%d",
+			rc.Attrs.StartOffset, rc.Attrs.StartOffset+rc.Remain()-1, rc.Attrs.Size)
+		if err := oss.VerifyContentRange(contentRange, byteRange); err != nil {
+			rc.Close()
+			return nil, err
+		}
+	}
+
+	return rc, nil
 }
 
 func (g *GoogleCloudStorage) Exists(key string) (bool, error) {

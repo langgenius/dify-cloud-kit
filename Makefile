@@ -1,7 +1,8 @@
 COMPOSE_INTEGRATION := docker compose -f compose.integration.yaml
 
-# Start the ephemeral emulator stack (LocalStack S3 + Azurite Blob) and wait
-# for healthchecks. Services are left running until `make integration-down`.
+# Start the ephemeral emulator stack (LocalStack S3 + Azurite Blob +
+# fake-gcs-server) and wait for healthchecks. Services are left running until
+# `make integration-down`.
 integration-up:
 	$(COMPOSE_INTEGRATION) up -d --wait --wait-timeout 120
 

@@ -28,3 +28,17 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.56.1
+    # -public-host must equal the host:port the SDK's XML API reads use,
+    # otherwise the emulator only answers the JSON API.
+    command: ["-scheme", "http", "-backend", "memory", "-public-host", "127.0.0.1:14443"]
+    ports:
+      - "127.0.0.1:14443:4443"
+    healthcheck:
+      # The JSON API answers /storage/v1/b as soon as the server is up.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4443/storage/v1/b || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
