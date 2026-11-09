@@ -210,6 +210,9 @@ func (g *GoogleCloudStorage) State(key string) (oss.OSSState, error) {
 }
 
 func (g *GoogleCloudStorage) List(prefix string) ([]oss.OSSPath, error) {
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix = prefix + "/"
+	}
 	ctx := context.Background()
 	it := g.client.Bucket(g.bucket).Objects(ctx, &storage.Query{
 		Prefix: prefix,
