@@ -1,6 +1,16 @@
 package huaweiobs
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/langgenius/dify-cloud-kit/oss"
+)
+
+func TestOBSDoesNotSupportStreaming(t *testing.T) {
+	if oss.SupportsStreaming(&HuaweiOBSStorage{}) {
+		t.Fatal("Huawei OBS must not report streaming support")
+	}
+}
 
 func TestListedObjectPath(t *testing.T) {
 	tests := []struct {

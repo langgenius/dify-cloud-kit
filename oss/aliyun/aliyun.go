@@ -2,8 +2,11 @@ package aliyun
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"path"
 	"strings"
 	"time"
@@ -11,6 +14,8 @@ import (
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	difyoss "github.com/langgenius/dify-cloud-kit/oss"
 )
+
+var _ difyoss.StreamingOSS = (*AliyunOSSStorage)(nil)
 
 type AliyunOSSStorage struct {
 	client *oss.Client
@@ -99,19 +104,51 @@ func (s *AliyunOSSStorage) Save(key string, data []byte) error {
 }
 
 func (s *AliyunOSSStorage) Load(key string) ([]byte, error) {
-	fullPath := s.fullPath(key)
-	object, err := s.bucket.GetObject(fullPath)
+	reader, err := s.Range(context.Background(), key, nil)
 	if err != nil {
 		return nil, err
 	}
-	// Ensure object is closed after reading
-	defer object.Close()
+	defer reader.Close()
 
-	data, err := io.ReadAll(object)
-	if err != nil {
+	return io.ReadAll(reader)
+}
+
+func (s *AliyunOSSStorage) Range(ctx context.Context, key string, byteRange *difyoss.ByteRange) (io.ReadCloser, error) {
+	options := []oss.Option{oss.WithContext(ctx)}
+	if byteRange != nil {
+		rangeHeader, err := byteRange.HTTPRange()
+		if err != nil {
+			return nil, err
+		}
+		options = append(options,
+			oss.NormalizedRange(strings.TrimPrefix(rangeHeader, "bytes=")),
+			// "standard" makes OSS return 416 for out-of-range offsets
+			// instead of silently serving the whole object.
+			oss.RangeBehavior("standard"),
+		)
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return data, nil
+
+	fullPath := s.fullPath(key)
+	result, err := s.bucket.DoGetObject(&oss.GetObjectRequest{ObjectKey: fullPath}, options)
+	if err != nil {
+		var svcErr oss.ServiceError
+		if errors.As(err, &svcErr) && svcErr.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			return nil, difyoss.ErrRangeNotSatisfiable
+		}
+		return nil, err
+	}
+
+	if byteRange != nil {
+		if err := difyoss.VerifyContentRange(result.Response.Headers.Get("Content-Range"), byteRange); err != nil {
+			result.Response.Close()
+			return nil, err
+		}
+	}
+
+	return result.Response, nil
 }
 
 func (s *AliyunOSSStorage) Exists(key string) (bool, error) {

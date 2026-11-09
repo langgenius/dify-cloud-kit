@@ -1,13 +1,24 @@
 package azureblob
 
 import (
-	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/langgenius/dify-cloud-kit/oss"
+)
+
+var (
+	_ oss.StreamingOSS = (*AzureBlobStorage)(nil)
+	_ oss.Preparer     = (*AzureBlobStorage)(nil)
 )
 
 type AzureBlobStorage struct {
@@ -50,30 +61,93 @@ func NewAzureBlobStorage(args oss.OSSArgs) (oss.OSS, error) {
 	}, nil
 }
 
+// Prepare creates the configured container in the storage account if it does
+// not exist. It is idempotent: ContainerAlreadyExists is a success, and every
+// other error is returned to the caller. It is never called implicitly.
+func (a *AzureBlobStorage) Prepare(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := a.client.CreateContainer(ctx, a.containerName, nil)
+	if err == nil {
+		return nil
+	}
+	if bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
+		return nil
+	}
+	return fmt.Errorf("failed to prepare container %q: %w", a.containerName, err)
+}
+
 func (a *AzureBlobStorage) Save(key string, data []byte) error {
 	_, err := a.client.UploadBuffer(context.TODO(), a.containerName, key, data, nil)
 	return err
 }
 
 func (a *AzureBlobStorage) Load(key string) ([]byte, error) {
-	get, err := a.client.DownloadStream(context.TODO(), a.containerName, key, nil)
+	reader, err := a.Range(context.Background(), key, nil)
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 
-	downloadedData := bytes.Buffer{}
-	retryReader := get.NewRetryReader(context.TODO(), &azblob.RetryReaderOptions{})
-	_, err = downloadedData.ReadFrom(retryReader)
-	if err != nil {
+	return io.ReadAll(reader)
+}
+
+func (a *AzureBlobStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+	options := &azblob.DownloadStreamOptions{}
+	if byteRange != nil {
+		if _, err := byteRange.HTTPRange(); err != nil {
+			return nil, err
+		}
+		options.Range = azblob.HTTPRange{Offset: byteRange.Offset}
+		switch {
+		case byteRange.Length > 0:
+			options.Range.Count = byteRange.Length
+		case byteRange.Offset == 0 && byteRange.Length == -1:
+			// HTTPRange{Offset:0, Count:0} makes the SDK omit the Range
+			// header entirely, which would skip Content-Range verification
+			// and turn an unsatisfiable range (e.g. empty object) into a
+			// silent full download. Request the largest signed range
+			// instead; the service clamps the end to the object size and
+			// still returns 416 when offset >= size. The header must go
+			// through the SDK's signed Range option — injecting x-ms-range
+			// via WithHTTPHeader after signing breaks SharedKey auth.
+			options.Range.Count = math.MaxInt64
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	err = retryReader.Close()
+	resp, err := a.client.DownloadStream(ctx, a.containerName, key, options)
 	if err != nil {
+		var respErr *azcore.ResponseError
+		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			return nil, oss.ErrRangeNotSatisfiable
+		}
 		return nil, err
 	}
 
-	return downloadedData.Bytes(), nil
+	if byteRange != nil {
+		contentRange := ""
+		if resp.ContentRange != nil {
+			contentRange = *resp.ContentRange
+		}
+		if err := oss.VerifyContentRange(contentRange, byteRange); err != nil {
+			resp.Body.Close()
+			// Azurite signals an unsatisfiable range with a degenerate
+			// "bytes <start>-<start-1>/<total>" Content-Range (end before
+			// start) instead of 416; an empty range at the requested
+			// offset is unambiguously unsatisfiable.
+			if strings.HasPrefix(contentRange,
+				fmt.Sprintf("bytes %d-%d/", byteRange.Offset, byteRange.Offset-1)) {
+				return nil, oss.ErrRangeNotSatisfiable
+			}
+			return nil, err
+		}
+	}
+
+	return resp.NewRetryReader(ctx, &azblob.RetryReaderOptions{EarlyCloseAsError: true}), nil
 }
 
 func (a *AzureBlobStorage) Exists(key string) (bool, error) {

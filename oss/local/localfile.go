@@ -1,6 +1,8 @@
 package local
 
 import (
+	"context"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -8,6 +10,8 @@ import (
 
 	"github.com/langgenius/dify-cloud-kit/oss"
 )
+
+var _ oss.StreamingOSS = (*LocalStorage)(nil)
 
 type LocalStorage struct {
 	root string
@@ -40,9 +44,77 @@ func (l *LocalStorage) Save(key string, data []byte) error {
 }
 
 func (l *LocalStorage) Load(key string) ([]byte, error) {
-	path := filepath.Join(l.root, key)
+	reader, err := l.Range(context.Background(), key, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
 
-	return os.ReadFile(path)
+	return io.ReadAll(reader)
+}
+
+// ctxFileReader reads from a file section through an open *os.File, checking
+// the context on every Read so a cancelled read returns promptly.
+type ctxFileReader struct {
+	ctx     context.Context
+	file    *os.File
+	section *io.SectionReader
+}
+
+func (r *ctxFileReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.section.Read(p)
+}
+
+func (r *ctxFileReader) Close() error {
+	return r.file.Close()
+}
+
+func (l *LocalStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+	if byteRange != nil {
+		if _, err := byteRange.HTTPRange(); err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	path := filepath.Join(l.root, key)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	size := info.Size()
+
+	var offset, length int64
+	if byteRange != nil {
+		offset = byteRange.Offset
+		if offset >= size {
+			file.Close()
+			return nil, oss.ErrRangeNotSatisfiable
+		}
+		if byteRange.Length == -1 || byteRange.Length > size-offset {
+			length = size - offset
+		} else {
+			length = byteRange.Length
+		}
+	} else {
+		length = size
+	}
+
+	return &ctxFileReader{
+		ctx:     ctx,
+		file:    file,
+		section: io.NewSectionReader(file, offset, length),
+	}, nil
 }
 
 func (l *LocalStorage) Exists(key string) (bool, error) {

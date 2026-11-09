@@ -66,6 +66,105 @@ store, err := factory.Load("s3", oss.OSSArgs{
 })
 ```
 
+## 🌊 Streaming Reads (Range Support)
+
+`oss.OSS.Load` always buffers the entire object in memory. For large objects or
+partial reads, providers can implement the optional `oss.StreamingOSS`
+interface, which streams object content through an `io.ReadCloser` without
+buffering.
+
+```go
+type StreamingOSS interface {
+    OSS
+    Range(ctx context.Context, key string, byteRange *ByteRange) (io.ReadCloser, error)
+}
+
+type ByteRange struct {
+    Offset int64 // >= 0
+    Length int64 // > 0 bounded, -1 = from Offset to EOF
+}
+```
+
+Semantics:
+
+- `byteRange == nil` streams the whole object.
+- `Length == -1` streams from `Offset` to end of object.
+- `Length == 0` or `< -1` fails with `oss.ErrInvalidRange` before any I/O.
+- A range outside the object fails with `oss.ErrRangeNotSatisfiable` (HTTP 416
+  is mapped to this sentinel for remote providers).
+- There is **no suffix-range parser**: resolve `bytes=-N` yourself using the
+  object size from `State`.
+- Cancelling `ctx` aborts the request and subsequent `Read` calls. Always
+  `defer rc.Close()`.
+- **No automatic fallback**: backends without `Range` fail the type assertion;
+  the library never secretly buffers a ranged request via `Load`.
+- Partial `Range` calls verify the server actually honored the `Range` header
+  (via `Content-Range`); a server that ignores it causes an error instead of a
+  silent full download.
+
+### Supported streaming providers
+
+| Provider   | `Range` support | Notes                                     |
+|------------|----------------|-------------------------------------------|
+| Local      | ✅             | `os.File` + `io.SectionReader`, end clamped to file size |
+| AWS S3     | ✅             | `GetObjectInput.Range`, body streamed     |
+| Aliyun OSS | ✅             | `NormalizedRange` + `RangeBehavior("standard")` |
+| Azure Blob | ✅             | `DownloadStreamOptions.Range`, `NewRetryReader` resumes interrupted reads |
+| Google GCS | ✅             | `NewRangeReader`, 416 mapped to `ErrRangeNotSatisfiable` |
+| Tencent COS| ✅             | `ObjectGetOptions.Range`, body streamed  |
+| Huawei OBS | ❌             | Not supported: the SDK cannot express every range form and takes no per-request context; use `Load` |
+| Volcengine TOS| ✅          | `GetObjectV2Input.Range`, body streamed |
+
+### Capability detection
+
+Callers can check support explicitly instead of relying on a raw type
+assertion:
+
+```go
+if !oss.SupportsStreaming(store) {
+    // backend cannot stream; no fallback buffering is performed
+}
+```
+
+`oss.OpenStream` performs the assertion and delegates to `Range`, returning an
+error wrapping `oss.ErrStreamingNotSupported` for unsupported (or nil)
+backends:
+
+```go
+rc, err := oss.OpenStream(ctx, store, key, &oss.ByteRange{Offset: 0, Length: -1})
+if errors.Is(err, oss.ErrStreamingNotSupported) {
+    // handle non-streaming backend
+}
+if err != nil {
+    return err
+}
+defer rc.Close()
+```
+
+### Example
+
+```go
+streamer, ok := store.(oss.StreamingOSS)
+if !ok {
+    return errors.New("backend does not support streaming")
+}
+
+ctx := request.Context() // tie the read to the request lifecycle
+rc, err := streamer.Range(ctx, "big-file.bin", &oss.ByteRange{Offset: 0, Length: -1})
+if err != nil {
+    return err
+}
+defer rc.Close()
+
+// streams without loading the whole object into memory
+if _, err := io.Copy(w, rc); err != nil {
+    return err
+}
+```
+
+Note: enterprise-side caller integration (e.g. wiring `StreamingOSS` into
+dify-enterprise) is handled separately and is out of scope for this library.
+
 ## 🧪 Testing
 
 Unit tests are located in `tests/oss/oss_test.go`.
@@ -109,3 +208,102 @@ Some parts of the code in this project originate from [dify-plugin-daemon](https
 | AWS S3         |[Yeuoly](https://github.com/Yeuoly)|https://github.com/langgenius/dify-plugin-daemon/commit/9ad9d7d4de1d123956ab07955e541bc4053e5170|
 | Tencent COS    |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-plugin-daemon/pull/97|
 | Volcengine TOS |[quicksand](https://github.com/quicksandznzn)|https://github.com/langgenius/dify-cloud-kit/pull/2|
+
+## 🛠️ Explicit Preparation
+
+Some backends can create their configured storage resource on demand via the
+optional `oss.Preparer` capability interface:
+
+```go
+type Preparer interface {
+    Prepare(ctx context.Context) error
+}
+```
+
+`Prepare` is **idempotent** and is only ever invoked explicitly — never by
+constructors or read/write methods, so read-only clients can simply opt out.
+Check support and call it at deployment/startup time:
+
+```go
+if !oss.SupportsPrepare(store) {
+    // backend does not (yet) implement Preparer
+}
+err := oss.Prepare(ctx, store)
+if errors.Is(err, oss.ErrPrepareNotSupported) {
+    // unsupported backend
+}
+```
+
+`Preparer` is currently implemented by:
+
+- **Azure Blob** — creates the configured container in the existing storage
+  account (requires create permission). `ContainerAlreadyExists` is treated
+  as success.
+- **Google GCS** — requires `GoogleCloudStorage.Project`. Probes access by
+  listing at most one object (needs only `storage.objects.list`) and creates
+  the bucket only when it does not exist. A 409 Conflict on create is a
+  success only if the bucket is then accessible; a name owned by another
+  project is an error.
+- **AWS S3** — `NotFound` / `NoSuchBucket` on the bucket probe triggers
+  creation, with `LocationConstraint` set from the region outside
+  `us-east-1` (AWS only; S3-compatible endpoints keep their default).
+  `BucketAlreadyOwnedByYou` is a success; `BucketAlreadyExists` is a success
+  only if the bucket is then accessible, otherwise the name belongs to
+  another account and an error is returned. (The legacy constructor still
+  ensures the bucket at load time.)
+
+Every other error — 403, other 409 codes, 5xx, network, cancellation — is
+returned to the caller. Remaining providers (Aliyun, Tencent COS, Huawei
+OBS, Volcengine TOS) do not implement `Preparer` yet.
+
+## 🧩 Integration Tests (Emulators)
+
+Hermetic integration tests exercise the **library's own interface** —
+`factory.Load`, `oss.Prepare`, `Save`, `Range`/`OpenStream`, `Load`,
+`Exists`, `State`, `Delete` — end to end against local emulators. No raw
+cloud SDK clients are used in the tests and **no real cloud credentials or
+accounts are required**:
+
+| Emulator  | Image                                          | Endpoint                    |
+|-----------|------------------------------------------------|-----------------------------|
+| LocalStack| `localstack/localstack:4.0.3` (S3 only)        | `http://127.0.0.1:14566`    |
+| Azurite   | `mcr.microsoft.com/azure-storage/azurite:3.35.0` (blob) | `http://127.0.0.1:11000` |
+| fake-gcs  | `fsouza/fake-gcs-server:1.56.1` (memory)       | `http://127.0.0.1:14443`    |
+
+### Make targets
+
+```bash
+make integration-up      # start the ephemeral compose project and wait for health
+make test-integration    # up + CLOUDKIT_INTEGRATION=1 go test -race ./tests/integration
+make integration-down    # stop and remove the compose project
+```
+
+`test-integration` leaves services running for fast reruns; use
+`integration-down` when finished. Tests create uniquely named
+buckets/containers and delete only resources they created. The suite is
+gated on `CLOUDKIT_INTEGRATION=1` — a plain `go test ./...` skips it.
+
+### CI
+
+`.github/workflows/integration.yml` runs the unit tests (`./oss/...`) first,
+then `make test-integration`, on every pull request, push to `main`, and
+manual dispatch ("Storage Integration" check). No secrets are needed;
+emulator container logs are uploaded as a workflow artifact on failure and
+services are always torn down at the end.
+
+### Scope
+
+- Offline unit tests live under `./oss/...` and run with a plain `go test`
+  (every provider that implements `Range` — Local, S3, Aliyun, Azure, GCS,
+  Tencent COS, Volcengine TOS — has mock-server coverage).
+- Emulator-backed integration tests cover S3 (LocalStack), Azure Blob
+  (Azurite) and GCS (fake-gcs-server). Tencent COS and Volcengine TOS have
+  no official emulator, so they are covered by the offline mock-server
+  suite only.
+- `tests/oss/` is the legacy real-cloud suite (requires credentials) and is
+  not part of the hermetic integration gate.
+- A true-cloud opt-in test (`oss/azureblob/blob_live_test.go`, requires
+  `CLOUDKIT_AZURE_LIVE_*` env vars and an existing blob) is separate.
+
+The streaming feature and these emulator/CI tests ship together in the same
+PR — there is no stacked-branch dependency.
