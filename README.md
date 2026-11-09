@@ -112,13 +112,8 @@ Semantics:
 | Azure Blob | ✅             | `DownloadStreamOptions.Range`, `NewRetryReader` resumes interrupted reads |
 | Google GCS | ✅             | `NewRangeReader`, 416 mapped to `ErrRangeNotSatisfiable` |
 | Tencent COS| ✅             | `ObjectGetOptions.Range`, body streamed  |
-| Huawei OBS | ✅             | Range header sent verbatim via `WithCustomHeader` (the SDK's `RangeStart/RangeEnd` cannot express `bytes=N-` or `bytes=N-N`) |
+| Huawei OBS | ❌             | Not supported: the SDK cannot express every range form and takes no per-request context; use `Load` |
 | Volcengine TOS| ✅          | `GetObjectV2Input.Range`, body streamed |
-
-Huawei OBS caveat: the SDK has no per-request context. Cancelling `ctx`
-makes `Range` return `ctx.Err()` immediately and aborts an in-progress body
-read, but a request still waiting for response headers is only torn down by
-the SDK's own response-header timeout.
 
 ### Capability detection
 
@@ -300,11 +295,11 @@ services are always torn down at the end.
 
 - Offline unit tests live under `./oss/...` and run with a plain `go test`
   (every provider that implements `Range` — Local, S3, Aliyun, Azure, GCS,
-  Tencent COS, Huawei OBS, Volcengine TOS — has mock-server coverage).
+  Tencent COS, Volcengine TOS — has mock-server coverage).
 - Emulator-backed integration tests cover S3 (LocalStack), Azure Blob
-  (Azurite) and GCS (fake-gcs-server). Tencent COS, Huawei OBS and
-  Volcengine TOS have no official emulator, so they are covered by the
-  offline mock-server suite only.
+  (Azurite) and GCS (fake-gcs-server). Tencent COS and Volcengine TOS have
+  no official emulator, so they are covered by the offline mock-server
+  suite only.
 - `tests/oss/` is the legacy real-cloud suite (requires credentials) and is
   not part of the hermetic integration gate.
 - A true-cloud opt-in test (`oss/azureblob/blob_live_test.go`, requires

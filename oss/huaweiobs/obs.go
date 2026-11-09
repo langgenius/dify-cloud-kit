@@ -1,11 +1,8 @@
 package huaweiobs
 
 import (
-	"context"
-	"errors"
 	"io"
 	"math/rand"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -70,120 +67,18 @@ func (h *HuaweiOBSStorage) Save(key string, data []byte) error {
 }
 
 func (h *HuaweiOBSStorage) Load(key string) ([]byte, error) {
-	reader, err := h.Range(context.Background(), key, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-
-	return io.ReadAll(reader)
-}
-
-type getObjectResult struct {
-	output *obs.GetObjectOutput
-	err    error
-}
-
-func (h *HuaweiOBSStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
-	rangeHeader := ""
-	if byteRange != nil {
-		var err error
-		if rangeHeader, err = byteRange.HTTPRange(); err != nil {
-			return nil, err
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	input := &obs.GetObjectInput{
+	output, err := h.client.GetObject(&obs.GetObjectInput{
 		GetObjectMetadataInput: obs.GetObjectMetadataInput{
 			Bucket: h.bucket,
 			Key:    key,
 		},
+	})
+	if err != nil {
+		return nil, err
 	}
+	defer output.Body.Close()
 
-	// The OBS SDK takes no per-request context, so the GET runs in the
-	// background and is abandoned on cancellation; a response that still
-	// arrives afterwards is closed. The SDK's RangeStart/RangeEnd cannot
-	// express "bytes=N-" or "bytes=N-N", so the Range header is sent
-	// verbatim instead (custom headers are applied before signing).
-	done := make(chan getObjectResult, 1)
-	go func() {
-		var res getObjectResult
-		if rangeHeader == "" {
-			res.output, res.err = h.client.GetObject(input)
-		} else {
-			res.output, res.err = h.client.GetObject(input, obs.WithCustomHeader("Range", rangeHeader))
-		}
-		done <- res
-	}()
-
-	var res getObjectResult
-	select {
-	case res = <-done:
-	case <-ctx.Done():
-		go func() {
-			if late := <-done; late.output != nil {
-				late.output.Body.Close()
-			}
-		}()
-		return nil, ctx.Err()
-	}
-
-	if res.err != nil {
-		var apiErr obs.ObsError
-		if errors.As(res.err, &apiErr) && apiErr.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-			return nil, oss.ErrRangeNotSatisfiable
-		}
-		return nil, res.err
-	}
-	output := res.output
-
-	if byteRange != nil {
-		contentRange := ""
-		// The OBS SDK lower-cases response header keys.
-		if values := output.ResponseHeaders["content-range"]; len(values) > 0 {
-			contentRange = values[0]
-		}
-		if err := oss.VerifyContentRange(contentRange, byteRange); err != nil {
-			output.Body.Close()
-			return nil, err
-		}
-	}
-
-	return newCtxBody(ctx, output.Body), nil
-}
-
-// ctxBody closes the response body when ctx is done so a blocked Read
-// returns, and reports the context error instead of the close error.
-type ctxBody struct {
-	ctx  context.Context
-	body io.ReadCloser
-	stop func() bool
-}
-
-func newCtxBody(ctx context.Context, body io.ReadCloser) *ctxBody {
-	return &ctxBody{
-		ctx:  ctx,
-		body: body,
-		stop: context.AfterFunc(ctx, func() { body.Close() }),
-	}
-}
-
-func (b *ctxBody) Read(p []byte) (int, error) {
-	n, err := b.body.Read(p)
-	if err != nil && err != io.EOF {
-		if ctxErr := b.ctx.Err(); ctxErr != nil {
-			return n, ctxErr
-		}
-	}
-	return n, err
-}
-
-func (b *ctxBody) Close() error {
-	b.stop()
-	return b.body.Close()
+	return io.ReadAll(output.Body)
 }
 
 func (h *HuaweiOBSStorage) Exists(key string) (bool, error) {
