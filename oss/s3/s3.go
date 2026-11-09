@@ -304,9 +304,18 @@ func (s *S3Storage) Prepare(ctx context.Context) error {
 		return nil
 	}
 	var createErr smithy.APIError
-	if errors.As(err, &createErr) &&
-		(createErr.ErrorCode() == "BucketAlreadyOwnedByYou" || createErr.ErrorCode() == "BucketAlreadyExists") {
-		return nil
+	if errors.As(err, &createErr) {
+		switch createErr.ErrorCode() {
+		case "BucketAlreadyOwnedByYou":
+			return nil
+		case "BucketAlreadyExists":
+			if _, headErr := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
+				Bucket: aws.String(s.bucket),
+			}); headErr == nil {
+				return nil
+			}
+			return fmt.Errorf("failed to prepare bucket %q: name is taken and the bucket is not accessible: %w", s.bucket, err)
+		}
 	}
 	return fmt.Errorf("failed to prepare bucket %q: %w", s.bucket, err)
 }

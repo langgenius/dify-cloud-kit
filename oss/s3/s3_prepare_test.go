@@ -92,6 +92,55 @@ func TestS3PrepareCreateRaceTolerated(t *testing.T) {
 	}
 }
 
+func TestS3PrepareBucketOwnedByOtherFails(t *testing.T) {
+	var heads, creates int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			atomic.AddInt32(&heads, 1)
+			w.WriteHeader(http.StatusNotFound)
+		case http.MethodPut:
+			atomic.AddInt32(&creates, 1)
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>BucketAlreadyExists</Code><Message>taken</Message></Error>`)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	})
+	st, _ := newTestStorage(t, handler)
+
+	if err := st.Prepare(context.Background()); err == nil {
+		t.Fatal("expected error when the bucket name is owned by another account")
+	}
+	if heads != 2 || creates != 1 {
+		t.Fatalf("expected 2 HEADs and 1 create, got %d HEADs and %d creates", heads, creates)
+	}
+}
+
+func TestS3PrepareBucketAlreadyExistsAccessibleTolerated(t *testing.T) {
+	var heads int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			if atomic.AddInt32(&heads, 1) == 1 {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPut:
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>BucketAlreadyExists</Code><Message>exists</Message></Error>`)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	})
+	st, _ := newTestStorage(t, handler)
+
+	if err := st.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare with accessible BucketAlreadyExists: %v", err)
+	}
+}
+
 func TestS3PrepareHeadFails(t *testing.T) {
 	st, _ := newTestStorage(t, &bucketHandler{headCode: http.StatusForbidden})
 

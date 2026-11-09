@@ -58,7 +58,8 @@ func NewGoogleCloudStorage(args oss.OSSArgs) (oss.OSS, error) {
 }
 
 // Prepare creates the configured bucket if it does not exist. It is
-// idempotent: a 409 Conflict (bucket already exists) is a success, and every
+// idempotent: an existing bucket that this client can access is a success,
+// a 409 Conflict for a bucket owned by someone else is an error, and every
 // other error is returned to the caller. It is never called implicitly.
 func (g *GoogleCloudStorage) Prepare(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
@@ -67,15 +68,45 @@ func (g *GoogleCloudStorage) Prepare(ctx context.Context) error {
 	if g.project == "" {
 		return fmt.Errorf("gcs: cannot prepare bucket %q without a project ID (set GoogleCloudStorage.Project)", g.bucket)
 	}
-	err := g.client.Bucket(g.bucket).Create(ctx, g.project, nil)
+	err := g.checkBucketAccess(ctx)
+	if err == nil {
+		return nil
+	}
+	if !isBucketNotFound(err) {
+		return fmt.Errorf("failed to prepare bucket %q: %w", g.bucket, err)
+	}
+	err = g.client.Bucket(g.bucket).Create(ctx, g.project, nil)
 	if err == nil {
 		return nil
 	}
 	var apiErr *googleapi.Error
 	if errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict {
-		return nil
+		if g.checkBucketAccess(ctx) == nil {
+			return nil
+		}
+		return fmt.Errorf("failed to prepare bucket %q: name is taken and the bucket is not accessible: %w", g.bucket, err)
 	}
 	return fmt.Errorf("failed to prepare bucket %q: %w", g.bucket, err)
+}
+
+// checkBucketAccess lists at most one object, which needs only
+// storage.objects.list rather than storage.buckets.get.
+func (g *GoogleCloudStorage) checkBucketAccess(ctx context.Context) error {
+	it := g.client.Bucket(g.bucket).Objects(ctx, nil)
+	it.PageInfo().MaxSize = 1
+	_, err := it.Next()
+	if errors.Is(err, iterator.Done) {
+		return nil
+	}
+	return err
+}
+
+func isBucketNotFound(err error) bool {
+	if errors.Is(err, storage.ErrBucketNotExist) {
+		return true
+	}
+	var apiErr *googleapi.Error
+	return errors.As(err, &apiErr) && apiErr.Code == http.StatusNotFound
 }
 
 func (g *GoogleCloudStorage) Save(key string, data []byte) error {
