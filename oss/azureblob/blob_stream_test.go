@@ -509,105 +509,93 @@ func TestAzureRangeStreamsBeforeFullDownload(t *testing.T) {
 	}
 }
 
-// retryHandler serves a truncated first response (declares Content-Length
-// for the whole object but closes early), then asserts the retry carries an
-// advanced x-ms-range and If-Match ETag, and completes the remaining bytes.
-type retryHandler struct {
-	full              string // full object content
-	served            int    // bytes served on the first response
-	retried           chan struct{}
-	gotRange          string
-	gotIfMatch        string
-	gotAcceptEncoding string
-	t                 *testing.T
-}
-
-func (h *retryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	rangeHdr := r.Header.Get("x-ms-range")
-	if strings.HasPrefix(rangeHdr, "bytes=0-") || rangeHdr == "" {
-		w.Header().Set("ETag", `"etag1"`)
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(h.full)-1, len(h.full)))
-		w.Header().Set("Content-Length", fmt.Sprint(len(h.full)))
-		w.WriteHeader(http.StatusPartialContent)
-		w.Write([]byte(h.full[:h.served])) // truncated: unexpected EOF for the client
-		return
+// TestAzureRangeTruncatedBodySurfacesError proves a truncated response is
+// returned to the caller instead of being retried transparently, and that the
+// bytes delivered before the failure are preserved.
+func TestAzureRangeTruncatedBodySurfacesError(t *testing.T) {
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Header().Set("Content-Length", "10")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("abc"))
+	}))
+	t.Cleanup(srv.Close)
+	client, err := azblob.NewClientWithNoCredential(srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewClientWithNoCredential: %v", err)
 	}
-	// retry request
-	h.gotRange = rangeHdr
-	h.gotIfMatch = r.Header.Get("If-Match")
-	h.gotAcceptEncoding = r.Header.Get("Accept-Encoding")
-	var start int64
-	fmt.Sscan(strings.TrimSuffix(strings.TrimPrefix(rangeHdr, "bytes="), "-"), &start)
-	part := h.full[start:]
-	w.Header().Set("ETag", `"etag1"`)
-	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(h.full)-1, len(h.full)))
-	w.Header().Set("Content-Length", fmt.Sprint(len(part)))
-	w.WriteHeader(http.StatusPartialContent)
-	w.Write([]byte(part))
-	close(h.retried)
-}
+	st := &AzureBlobStorage{client: client, containerName: "cont"}
 
-func runRetryTest(t *testing.T, byteRange *oss.ByteRange, body string, served int, wantRetryRange string) string {
-	t.Helper()
-	h := &retryHandler{full: body, served: served, retried: make(chan struct{}), t: t}
-	st, _ := newTestStorage(t, h)
-
-	rc, err := st.Range(context.Background(), "key", byteRange)
+	rc, err := st.Range(context.Background(), "key", nil)
 	if err != nil {
 		t.Fatalf("Range: %v", err)
 	}
 	defer rc.Close()
 
-	readDone := make(chan struct {
-		data []byte
-		err  error
-	}, 1)
+	data, err := io.ReadAll(rc)
+	if err == nil {
+		t.Fatal("expected truncated read to fail")
+	}
+	if string(data) != "abc" {
+		t.Fatalf("got %q", data)
+	}
+	if n := atomic.LoadInt32(&requests); n != 1 {
+		t.Fatalf("expected 1 request, got %d", n)
+	}
+}
+
+// TestAzureRangeCloseIsTerminal proves Close stops a read that is blocked in
+// another goroutine without issuing a retry.
+func TestAzureRangeCloseIsTerminal(t *testing.T) {
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Header().Set("Content-Length", "10")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("abc"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	client, err := azblob.NewClientWithNoCredential(srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewClientWithNoCredential: %v", err)
+	}
+	st := &AzureBlobStorage{client: client, containerName: "cont"}
+
+	rc, err := st.Range(context.Background(), "key", nil)
+	if err != nil {
+		t.Fatalf("Range: %v", err)
+	}
+
+	buf := make([]byte, 3)
+	if _, err := io.ReadFull(rc, buf); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	readDone := make(chan error, 1)
 	go func() {
-		data, err := io.ReadAll(rc)
-		readDone <- struct {
-			data []byte
-			err  error
-		}{data, err}
+		_, err := io.ReadFull(rc, make([]byte, 7))
+		readDone <- err
 	}()
+	time.Sleep(50 * time.Millisecond)
 
+	if err := rc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 	select {
-	case <-h.retried:
-	case <-time.After(10 * time.Second):
-		t.Fatal("retry never issued")
+	case err := <-readDone:
+		if err == nil {
+			t.Fatal("expected read error after Close")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Read did not return after Close")
 	}
-	res := <-readDone
-	if res.err != nil {
-		t.Fatalf("ReadAll: %v", res.err)
-	}
-	if h.gotIfMatch != `"etag1"` {
-		t.Fatalf("retry If-Match %q", h.gotIfMatch)
-	}
-	// Retries must keep asking for raw bytes: without it Go's transport
-	// would gunzip a Content-Encoding: gzip blob on the retry leg only.
-	if h.gotAcceptEncoding != "identity" {
-		t.Fatalf("retry Accept-Encoding %q, want identity", h.gotAcceptEncoding)
-	}
-	if h.gotRange != wantRetryRange {
-		t.Fatalf("retry x-ms-range %q, want %q", h.gotRange, wantRetryRange)
-	}
-	return string(res.data)
-}
 
-func TestAzureRetryReaderAdvancesRange(t *testing.T) {
-	// bounded range 0-9 of a 10-byte object; first response truncates at 3
-	// bytes, retry must advance the offset while keeping the requested end.
-	got := runRetryTest(t, &oss.ByteRange{Offset: 0, Length: 10}, "0123456789", 3, "bytes=3-9")
-	if got != "0123456789" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-// TestAzureRetryAfterZeroToEOF proves retries after a {0,-1} request advance
-// the range correctly instead of re-requesting from 0.
-func TestAzureRetryAfterZeroToEOF(t *testing.T) {
-	got := runRetryTest(t, &oss.ByteRange{Offset: 0, Length: -1}, "0123456789", 3, "bytes=3-9223372036854775806")
-	if got != "0123456789" {
-		t.Fatalf("got %q", got)
+	time.Sleep(100 * time.Millisecond)
+	if n := atomic.LoadInt32(&requests); n != 1 {
+		t.Fatalf("expected 1 request after Close, got %d", n)
 	}
 }
 
@@ -638,8 +626,8 @@ func TestAzureLoadClosesBodyOnReadError(t *testing.T) {
 	})
 	st := newTrackingStorage(t, rt)
 
-	// Reads fail immediately; the retry reader must close each failed body
-	// before retrying, and Load returns the error.
+	// Reads fail immediately; Load's deferred Close must release the body
+	// before returning the error.
 	_, err := st.Load("key")
 	if err == nil {
 		t.Fatal("expected Load to fail")

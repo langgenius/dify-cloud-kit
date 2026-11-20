@@ -165,7 +165,7 @@ func (a *AzureBlobStorage) Range(ctx context.Context, key string, byteRange *oss
 		}
 	}
 
-	return resp.NewRetryReader(ctx, &azblob.RetryReaderOptions{EarlyCloseAsError: true}), nil
+	return resp.Body, nil
 }
 
 func (a *AzureBlobStorage) Exists(key string) (bool, error) {
