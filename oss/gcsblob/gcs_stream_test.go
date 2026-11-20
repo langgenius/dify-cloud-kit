@@ -1,6 +1,8 @@
 package gcsblob
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -39,7 +41,26 @@ type objectHandler struct {
 	rangeHdr   *string
 	requests   *int32
 	ignore     bool // respond 200 with full body regardless of Range
+	chunked    bool // omit Content-Length to force chunked transfer encoding
 	statusCode int  // if >0, respond with this status + XML error instead
+}
+
+// write emits body, leaving Content-Length out when chunked is set so the
+// response is delimited by chunked transfer encoding instead.
+func (h *objectHandler) write(w http.ResponseWriter, status int, contentRange string, body []byte) {
+	if contentRange != "" {
+		w.Header().Set("Content-Range", contentRange)
+	}
+	if !h.chunked {
+		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+	}
+	w.WriteHeader(status)
+	if h.chunked {
+		// Commit the headers before the body so the server does not
+		// buffer the response and add a Content-Length.
+		w.(http.Flusher).Flush()
+	}
+	w.Write(body)
 }
 
 func (h *objectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -56,9 +77,7 @@ func (h *objectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		*h.rangeHdr = rangeHdr
 	}
 	if rangeHdr == "" || h.ignore {
-		w.Header().Set("Content-Length", fmt.Sprint(len(h.body)))
-		w.WriteHeader(http.StatusOK)
-		w.Write(h.body)
+		h.write(w, http.StatusOK, "", h.body)
 		return
 	}
 	// parse "bytes=start-end" / "bytes=start-"
@@ -81,11 +100,7 @@ func (h *objectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if end >= int64(len(h.body)) {
 		end = int64(len(h.body)) - 1
 	}
-	part := h.body[start : end+1]
-	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(h.body)))
-	w.Header().Set("Content-Length", fmt.Sprint(len(part)))
-	w.WriteHeader(http.StatusPartialContent)
-	w.Write(part)
+	h.write(w, http.StatusPartialContent, fmt.Sprintf("bytes %d-%d/%d", start, end, len(h.body)), h.body[start:end+1])
 }
 
 func TestGCSRangeFull(t *testing.T) {
@@ -244,6 +259,209 @@ func TestGCSRangeServerIgnoresRange(t *testing.T) {
 	_, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
 	if err == nil {
 		t.Fatal("expected error when server ignores the range")
+	}
+}
+
+// TestGCSRangeChunkedHonored covers responses without Content-Length where the
+// server did honor the range: the end cannot be reconstructed, but the start
+// offset and total are still parsed from Content-Range.
+func TestGCSRangeChunkedHonored(t *testing.T) {
+	var rangeHdr string
+	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr, chunked: true})
+
+	tests := []struct {
+		name    string
+		r       *oss.ByteRange
+		want    string
+		wantHdr string
+	}{
+		{name: "bounded", r: &oss.ByteRange{Offset: 2, Length: 4}, want: "2345", wantHdr: "bytes=2-5"},
+		{name: "open ended", r: &oss.ByteRange{Offset: 4, Length: -1}, want: "456789", wantHdr: "bytes=4-"},
+		{name: "clamped end", r: &oss.ByteRange{Offset: 8, Length: 100}, want: "89", wantHdr: "bytes=8-107"},
+		{name: "zero to EOF", r: &oss.ByteRange{Offset: 0, Length: -1}, want: "0123456789"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rc, err := st.Range(context.Background(), "key", tt.r)
+			if err != nil {
+				t.Fatalf("Range(%+v): %v", *tt.r, err)
+			}
+			defer rc.Close()
+			data, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if string(data) != tt.want {
+				t.Fatalf("got %q, want %q", data, tt.want)
+			}
+			if rangeHdr != tt.wantHdr {
+				t.Fatalf("got Range header %q, want %q", rangeHdr, tt.wantHdr)
+			}
+		})
+	}
+}
+
+// TestGCSRangeChunkedIgnored covers a 200 with no Content-Length for a ranged
+// request, regardless of why the response was re-framed. The whole object is
+// streamed, so only a whole-object request may be served.
+func TestGCSRangeChunkedIgnored(t *testing.T) {
+	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), ignore: true, chunked: true})
+
+	for _, r := range []oss.ByteRange{
+		{Offset: 0, Length: 5},
+		{Offset: 0, Length: 1},
+		{Offset: 2, Length: 4},
+		{Offset: 2, Length: -1},
+	} {
+		rc, err := st.Range(context.Background(), "key", &r)
+		if rc != nil {
+			rc.Close()
+		}
+		if err == nil {
+			t.Fatalf("range=%+v: expected error when the server ignores the range", r)
+		}
+	}
+
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
+	if err != nil {
+		t.Fatalf("whole-object Range: %v", err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(data) != "0123456789" {
+		t.Fatalf("got %q", data)
+	}
+}
+
+// transcodingHandler serves the response GCS produces for an object stored
+// with Content-Encoding: gzip when it is decompressively transcoded: the body
+// is decompressed, Content-Encoding and Content-Length are dropped, and the
+// stored metadata is reported through the X-Goog-Stored-* headers. Range
+// requests are silently ignored, as documented.
+type transcodingHandler struct {
+	stored []byte // object bytes as stored (gzip-compressed)
+	served []byte // object bytes as served (decompressed)
+}
+
+func (h *transcodingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("X-Goog-Stored-Content-Encoding", "gzip")
+	w.Header().Set("X-Goog-Stored-Content-Length", fmt.Sprint(len(h.stored)))
+	w.WriteHeader(http.StatusOK)
+	// No Content-Length: commit the headers first so the body is chunked.
+	w.(http.Flusher).Flush()
+	w.Write(h.served)
+}
+
+// gzipFixture compresses served and returns the stored bytes.
+func gzipFixture(t *testing.T, served []byte) []byte {
+	t.Helper()
+	var stored bytes.Buffer
+	zw := gzip.NewWriter(&stored)
+	if _, err := zw.Write(served); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	if stored.Len() == len(served) {
+		t.Fatalf("fixture is not compressed: stored %d, served %d", stored.Len(), len(served))
+	}
+	return stored.Bytes()
+}
+
+// TestGCSRangeTranscoded pins the server-side decompressive-transcoding shape:
+// a gzip-stored object whose response is decompressed, chunked, and carries
+// neither Content-Encoding nor Content-Length. The stored and served sizes
+// differ and Range is ignored, so only a whole-object request can be served.
+func TestGCSRangeTranscoded(t *testing.T) {
+	served := bytes.Repeat([]byte("dify"), 1024)
+	stored := gzipFixture(t, served)
+	st, _ := newTestStorage(t, &transcodingHandler{stored: stored, served: served})
+
+	for _, r := range []oss.ByteRange{
+		{Offset: 0, Length: 5},
+		{Offset: 0, Length: 1},
+		{Offset: 2, Length: 4},
+		{Offset: 2, Length: -1},
+	} {
+		rc, err := st.Range(context.Background(), "key", &r)
+		if rc != nil {
+			rc.Close()
+		}
+		if err == nil {
+			t.Fatalf("range=%+v: expected error for a transcoded response", r)
+		}
+	}
+
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
+	if err != nil {
+		t.Fatalf("whole-object Range: %v", err)
+	}
+	defer rc.Close()
+
+	reader, ok := rc.(*storage.Reader)
+	if !ok {
+		t.Fatalf("Range returned %T, want *storage.Reader", rc)
+	}
+	if !reader.Attrs.Decompressed {
+		t.Fatal("SDK did not report the response as decompressed; fixture is not faithful")
+	}
+	if reader.Attrs.Size != -1 || reader.Remain() != -1 {
+		t.Fatalf("Attrs.Size = %d, Remain() = %d; want -1 without Content-Length", reader.Attrs.Size, reader.Remain())
+	}
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !bytes.Equal(data, served) {
+		t.Fatalf("read %d bytes, want %d", len(data), len(served))
+	}
+}
+
+// TestGCSRangeTransportDecompressed covers the other path to an unknown
+// length. The HTTP transport only asks for gzip when the request carries no
+// Range header, so whole-object reads of a gzip-stored object are decompressed
+// by the transport itself; a response that had a Content-Length on the wire
+// still reaches the provider with Remain() == -1.
+func TestGCSRangeTransportDecompressed(t *testing.T) {
+	served := bytes.Repeat([]byte("dify"), 1024)
+	stored := gzipFixture(t, served)
+	st, _ := newTestStorage(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Length", fmt.Sprint(len(stored)))
+		w.WriteHeader(http.StatusOK)
+		w.Write(stored)
+	}))
+
+	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
+	if err != nil {
+		t.Fatalf("whole-object Range: %v", err)
+	}
+	defer rc.Close()
+
+	reader, ok := rc.(*storage.Reader)
+	if !ok {
+		t.Fatalf("Range returned %T, want *storage.Reader", rc)
+	}
+	if !reader.Attrs.Decompressed {
+		t.Fatal("SDK did not report the response as decompressed; transport did not negotiate gzip")
+	}
+	if reader.Remain() != -1 {
+		t.Fatalf("Remain() = %d, want -1 after transport decompression", reader.Remain())
+	}
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !bytes.Equal(data, served) {
+		t.Fatalf("read %d bytes, want %d", len(data), len(served))
 	}
 }
 

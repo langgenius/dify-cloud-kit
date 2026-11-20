@@ -167,16 +167,28 @@ func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *o
 			rc.Close()
 			return nil, oss.ErrRangeNotSatisfiable
 		}
-		// The GCS SDK enforces that a range starting at a non-zero offset
-		// returns 206; reconstruct the Content-Range from the reader
-		// attributes and verify it the same way as other providers so a
-		// server that ignores the range (e.g. decompressive transcoding)
-		// fails loudly instead of streaming the whole object.
-		contentRange := fmt.Sprintf("bytes %d-%d/%d",
-			rc.Attrs.StartOffset, rc.Attrs.StartOffset+rc.Remain()-1, rc.Attrs.Size)
-		if err := oss.VerifyContentRange(contentRange, byteRange); err != nil {
+		// Verify the server honored the range instead of streaming the whole
+		// object. Remain is -1 without Content-Length; Attrs.Size still tells a
+		// parsed 206 (total from Content-Range) from a bare 200.
+		start, size, remain := rc.Attrs.StartOffset, rc.Attrs.Size, rc.Remain()
+		switch {
+		case remain >= 0:
+			// Content-Length present: verify the full reconstructed range.
+			contentRange := fmt.Sprintf("bytes %d-%d/%d", start, start+remain-1, size)
+			if err := oss.VerifyContentRange(contentRange, byteRange); err != nil {
+				rc.Close()
+				return nil, err
+			}
+		case size >= 0:
+			// 206 without Content-Length: start is known, the end is not.
+			if start != byteRange.Offset {
+				rc.Close()
+				return nil, fmt.Errorf("server did not honor requested range %v: Content-Range starts at %d", *byteRange, start)
+			}
+		case byteRange.Offset != 0 || byteRange.Length != -1:
+			// 200 without Content-Length: range ignored, only whole-object reads are safe.
 			rc.Close()
-			return nil, err
+			return nil, fmt.Errorf("server did not honor requested range %v: response has neither Content-Range nor Content-Length", *byteRange)
 		}
 	}
 
