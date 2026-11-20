@@ -153,6 +153,9 @@ func (t *TencentCOS) Validate() error {
 type GoogleCloudStorage struct {
 	Bucket         string
 	CredentialsB64 string
+	// Project is required only for Prepare (bucket creation); reads and
+	// writes work without it.
+	Project string
 }
 
 func (g *GoogleCloudStorage) Validate() error {

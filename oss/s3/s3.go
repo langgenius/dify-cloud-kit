@@ -4,21 +4,40 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/langgenius/dify-cloud-kit/oss"
 )
 
+var _ oss.StreamingOSS = (*S3Storage)(nil)
+
 type S3Storage struct {
 	bucket string
 	client *s3.Client
+	// locationConstraint is the AWS region to create buckets in; empty for
+	// us-east-1 and for S3-compatible endpoints, which keep their default.
+	locationConstraint string
+}
+
+func (s *S3Storage) createBucketInput() *s3.CreateBucketInput {
+	input := &s3.CreateBucketInput{Bucket: aws.String(s.bucket)}
+	if s.locationConstraint != "" {
+		input.CreateBucketConfiguration = &types.CreateBucketConfiguration{
+			LocationConstraint: types.BucketLocationConstraint(s.locationConstraint),
+		}
+	}
+	return input
 }
 
 func NewS3Storage(args oss.OSSArgs) (oss.OSS, error) {
@@ -105,6 +124,11 @@ func NewS3Storage(args oss.OSSArgs) (oss.OSS, error) {
 		})
 	}
 
+	store := &S3Storage{bucket: bucket, client: client}
+	if useAws && region != "" && region != "us-east-1" {
+		store.locationConstraint = region
+	}
+
 	// check bucket
 	_, err = client.HeadBucket(context.TODO(), &s3.HeadBucketInput{
 		Bucket: aws.String(bucket),
@@ -112,15 +136,13 @@ func NewS3Storage(args oss.OSSArgs) (oss.OSS, error) {
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
-			_, err = client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
-				Bucket: aws.String(bucket),
-			})
+			_, err = client.CreateBucket(context.TODO(), store.createBucketInput())
 			if err != nil {
 				return nil, oss.ErrProviderInit.WithError(err)
 			}
 		}
 	}
-	return &S3Storage{bucket: bucket, client: client}, nil
+	return store, nil
 }
 
 func normalizeSignatureVersion(version string) string {
@@ -128,7 +150,7 @@ func normalizeSignatureVersion(version string) string {
 	case "unsigned":
 		return ""
 	case "":
-		return "v4"  // 默认使用 v4
+		return "v4" // 默认使用 v4
 	default:
 		return version
 	}
@@ -144,15 +166,57 @@ func (s *S3Storage) Save(key string, data []byte) error {
 }
 
 func (s *S3Storage) Load(key string) ([]byte, error) {
-	resp, err := s.client.GetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
-	})
+	reader, err := s.Range(context.Background(), key, nil)
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(reader)
+}
+
+func (s *S3Storage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}
+	if byteRange != nil {
+		rangeHeader, err := byteRange.HTTPRange()
+		if err != nil {
+			return nil, err
+		}
+		input.Range = aws.String(rangeHeader)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.GetObject(ctx, input)
+	if err != nil {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) &&
+			(apiErr.ErrorCode() == "InvalidRange" || apiErr.ErrorCode() == "RequestedRangeNotSatisfiable") {
+			return nil, oss.ErrRangeNotSatisfiable
+		}
+		var respErr *awshttp.ResponseError
+		if errors.As(err, &respErr) && respErr.HTTPStatusCode() == http.StatusRequestedRangeNotSatisfiable {
+			return nil, oss.ErrRangeNotSatisfiable
+		}
+		return nil, err
+	}
+
+	if byteRange != nil {
+		contentRange := ""
+		if resp.ContentRange != nil {
+			contentRange = *resp.ContentRange
+		}
+		if err := oss.VerifyContentRange(contentRange, byteRange); err != nil {
+			resp.Body.Close()
+			return nil, err
+		}
+	}
+
+	return resp.Body, nil
 }
 
 func (s *S3Storage) Exists(key string) (bool, error) {
@@ -228,6 +292,47 @@ func (s *S3Storage) State(key string) (oss.OSSState, error) {
 
 func (s *S3Storage) Type() string {
 	return oss.OSS_TYPE_S3
+}
+
+// Prepare creates the configured bucket if it does not exist. It is
+// idempotent: an already-existing bucket is a success, and every other error
+// is returned to the caller. It is never called implicitly. (The legacy
+// constructor additionally ensures the bucket at load time; Prepare is the
+// explicit capability for callers that want to control this.)
+func (s *S3Storage) Prepare(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(s.bucket),
+	})
+	if err == nil {
+		return nil
+	}
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) ||
+		(apiErr.ErrorCode() != "NotFound" && apiErr.ErrorCode() != "NoSuchBucket") {
+		return fmt.Errorf("failed to prepare bucket %q: %w", s.bucket, err)
+	}
+	_, err = s.client.CreateBucket(ctx, s.createBucketInput())
+	if err == nil {
+		return nil
+	}
+	var createErr smithy.APIError
+	if errors.As(err, &createErr) {
+		switch createErr.ErrorCode() {
+		case "BucketAlreadyOwnedByYou":
+			return nil
+		case "BucketAlreadyExists":
+			if _, headErr := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
+				Bucket: aws.String(s.bucket),
+			}); headErr == nil {
+				return nil
+			}
+			return fmt.Errorf("failed to prepare bucket %q: name is taken and the bucket is not accessible: %w", s.bucket, err)
+		}
+	}
+	return fmt.Errorf("failed to prepare bucket %q: %w", s.bucket, err)
 }
 
 func ToPtr[T any](value T) *T {
