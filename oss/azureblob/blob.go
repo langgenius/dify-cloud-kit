@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
@@ -24,6 +25,23 @@ var (
 type AzureBlobStorage struct {
 	client        *azblob.Client
 	containerName string
+}
+
+// identityEncodingPolicy prevents net/http from implicitly decompressing gzipped
+// content, which would break range requests on compressed blobs.
+type identityEncodingPolicy struct{}
+
+func (identityEncodingPolicy) Do(req *policy.Request) (*http.Response, error) {
+	req.Raw().Header.Set("Accept-Encoding", "identity")
+	return req.Next()
+}
+
+func newClientOptions() *azblob.ClientOptions {
+	return &azblob.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			PerCallPolicies: []policy.Policy{identityEncodingPolicy{}},
+		},
+	}
 }
 
 func NewAzureBlobStorage(args oss.OSSArgs) (oss.OSS, error) {
@@ -43,13 +61,13 @@ func NewAzureBlobStorage(args oss.OSSArgs) (oss.OSS, error) {
 		if err != nil {
 			return nil, oss.ErrProviderInit.WithError(err)
 		}
-		client, err = azblob.NewClient(args.AzureBlob.ServiceURL, cred, nil)
+		client, err = azblob.NewClient(args.AzureBlob.ServiceURL, cred, newClientOptions())
 		if err != nil {
 			return nil, oss.ErrProviderInit.WithError(err)
 		}
 	} else {
 		connectionString := args.AzureBlob.ConnectionString
-		client, err = azblob.NewClientFromConnectionString(connectionString, nil)
+		client, err = azblob.NewClientFromConnectionString(connectionString, newClientOptions())
 		if err != nil {
 			return nil, oss.ErrProviderInit.WithError(err)
 		}

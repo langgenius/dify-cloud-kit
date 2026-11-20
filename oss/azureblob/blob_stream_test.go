@@ -22,7 +22,7 @@ func newTestStorage(t *testing.T, handler http.Handler) (*AzureBlobStorage, *htt
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	client, err := azblob.NewClientWithNoCredential(srv.URL, nil)
+	client, err := azblob.NewClientWithNoCredential(srv.URL, newClientOptions())
 	if err != nil {
 		t.Fatalf("NewClientWithNoCredential: %v", err)
 	}
@@ -513,12 +513,13 @@ func TestAzureRangeStreamsBeforeFullDownload(t *testing.T) {
 // for the whole object but closes early), then asserts the retry carries an
 // advanced x-ms-range and If-Match ETag, and completes the remaining bytes.
 type retryHandler struct {
-	full       string // full object content
-	served     int    // bytes served on the first response
-	retried    chan struct{}
-	gotRange   string
-	gotIfMatch string
-	t          *testing.T
+	full              string // full object content
+	served            int    // bytes served on the first response
+	retried           chan struct{}
+	gotRange          string
+	gotIfMatch        string
+	gotAcceptEncoding string
+	t                 *testing.T
 }
 
 func (h *retryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -534,6 +535,7 @@ func (h *retryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// retry request
 	h.gotRange = rangeHdr
 	h.gotIfMatch = r.Header.Get("If-Match")
+	h.gotAcceptEncoding = r.Header.Get("Accept-Encoding")
 	var start int64
 	fmt.Sscan(strings.TrimSuffix(strings.TrimPrefix(rangeHdr, "bytes="), "-"), &start)
 	part := h.full[start:]
@@ -579,6 +581,11 @@ func runRetryTest(t *testing.T, byteRange *oss.ByteRange, body string, served in
 	}
 	if h.gotIfMatch != `"etag1"` {
 		t.Fatalf("retry If-Match %q", h.gotIfMatch)
+	}
+	// Retries must keep asking for raw bytes: without it Go's transport
+	// would gunzip a Content-Encoding: gzip blob on the retry leg only.
+	if h.gotAcceptEncoding != "identity" {
+		t.Fatalf("retry Accept-Encoding %q, want identity", h.gotAcceptEncoding)
 	}
 	if h.gotRange != wantRetryRange {
 		t.Fatalf("retry x-ms-range %q, want %q", h.gotRange, wantRetryRange)
