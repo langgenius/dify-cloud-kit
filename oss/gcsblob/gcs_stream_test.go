@@ -262,9 +262,8 @@ func TestGCSRangeServerIgnoresRange(t *testing.T) {
 	}
 }
 
-// TestGCSRangeChunkedHonored covers responses without Content-Length where the
-// server did honor the range: the end cannot be reconstructed, but the start
-// offset and total are still parsed from Content-Range.
+// TestGCSRangeChunkedHonored covers valid responses without Content-Length,
+// including range lengths clamped to the object size.
 func TestGCSRangeChunkedHonored(t *testing.T) {
 	var rangeHdr string
 	st, _ := newTestStorage(t, &objectHandler{body: []byte("0123456789"), rangeHdr: &rangeHdr, chunked: true})
@@ -296,6 +295,41 @@ func TestGCSRangeChunkedHonored(t *testing.T) {
 			}
 			if rangeHdr != tt.wantHdr {
 				t.Fatalf("got Range header %q, want %q", rangeHdr, tt.wantHdr)
+			}
+		})
+	}
+}
+
+func TestGCSRangeChunkedWrongLength(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"too long", "23456789", "2345"},
+		{"too short", "23", "23"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, _ := newTestStorage(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes 2-%d/10", 1+len(tc.body)))
+				w.WriteHeader(http.StatusPartialContent)
+				w.(http.Flusher).Flush()
+				w.Write([]byte(tc.body))
+			}))
+			rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 2, Length: 4})
+			if err != nil {
+				t.Fatalf("Range: %v", err)
+			}
+			defer rc.Close()
+			got, err := io.ReadAll(rc)
+			if err == nil {
+				t.Fatal("expected range length error")
+			}
+			if tc.name == "too short" && !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("got %v, want unexpected EOF", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}

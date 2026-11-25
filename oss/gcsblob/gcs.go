@@ -190,11 +190,21 @@ func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *o
 				return nil, err
 			}
 		case size >= 0:
-			// 206 without Content-Length: start is known, the end is not.
+			// The SDK exposes the start and total, but not the end. Validate
+			// the byte count as the chunked body is read.
 			if start != byteRange.Offset {
 				rc.Close()
 				return nil, fmt.Errorf("server did not honor requested range %v: Content-Range starts at %d", *byteRange, start)
 			}
+			if start >= size {
+				rc.Close()
+				return nil, oss.ErrRangeNotSatisfiable
+			}
+			expected := size - start
+			if length > 0 {
+				expected = min(expected, length)
+			}
+			return &exactRangeReader{ReadCloser: rc, remaining: expected}, nil
 		case byteRange.Offset != 0 || byteRange.Length != -1:
 			// 200 without Content-Length: range ignored, only whole-object reads are safe.
 			rc.Close()
@@ -203,6 +213,41 @@ func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *o
 	}
 
 	return rc, nil
+}
+
+// exactRangeReader checks the length at EOF without exposing bytes beyond the range.
+type exactRangeReader struct {
+	io.ReadCloser
+	remaining int64
+	terminal  error
+}
+
+func (r *exactRangeReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.terminal != nil {
+		return 0, r.terminal
+	}
+	if r.remaining == 0 {
+		var extra [1]byte
+		n, err := r.ReadCloser.Read(extra[:])
+		if n > 0 {
+			err = errors.New("GCS range response has more bytes than expected")
+		}
+		r.terminal = err
+		return 0, err
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.ReadCloser.Read(p)
+	r.remaining -= int64(n)
+	if err == io.EOF && r.remaining > 0 {
+		err = fmt.Errorf("GCS range response ended %d bytes early: %w", r.remaining, io.ErrUnexpectedEOF)
+	}
+	r.terminal = err
+	return n, err
 }
 
 func (g *GoogleCloudStorage) Exists(key string) (bool, error) {
