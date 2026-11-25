@@ -1,6 +1,7 @@
 package azureblob
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -27,12 +28,16 @@ type AzureBlobStorage struct {
 	containerName string
 }
 
+type identityEncodingKey struct{}
+
 // identityEncodingPolicy prevents net/http from implicitly decompressing gzipped
 // content, which would break range requests on compressed blobs.
 type identityEncodingPolicy struct{}
 
 func (identityEncodingPolicy) Do(req *policy.Request) (*http.Response, error) {
-	req.Raw().Header.Set("Accept-Encoding", "identity")
+	if req.Raw().Context().Value(identityEncodingKey{}) == true {
+		req.Raw().Header.Set("Accept-Encoding", "identity")
+	}
 	return req.Next()
 }
 
@@ -102,13 +107,23 @@ func (a *AzureBlobStorage) Save(key string, data []byte) error {
 }
 
 func (a *AzureBlobStorage) Load(key string) ([]byte, error) {
-	reader, err := a.Range(context.Background(), key, nil)
+	ctx := context.TODO()
+	get, err := a.client.DownloadStream(ctx, a.containerName, key, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
 
-	return io.ReadAll(reader)
+	var downloadedData bytes.Buffer
+	retryReader := get.NewRetryReader(ctx, &azblob.RetryReaderOptions{})
+	_, readErr := downloadedData.ReadFrom(retryReader)
+	closeErr := retryReader.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return downloadedData.Bytes(), nil
 }
 
 func (a *AzureBlobStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
@@ -136,6 +151,7 @@ func (a *AzureBlobStorage) Range(ctx context.Context, key string, byteRange *oss
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx = context.WithValue(ctx, identityEncodingKey{}, true)
 
 	resp, err := a.client.DownloadStream(ctx, a.containerName, key, options)
 	if err != nil {

@@ -166,13 +166,16 @@ func (s *S3Storage) Save(key string, data []byte) error {
 }
 
 func (s *S3Storage) Load(key string) ([]byte, error) {
-	reader, err := s.Range(context.Background(), key, nil)
+	resp, err := s.client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer resp.Body.Close()
 
-	return io.ReadAll(reader)
+	return io.ReadAll(resp.Body)
 }
 
 func (s *S3Storage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {

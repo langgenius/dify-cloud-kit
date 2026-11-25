@@ -57,13 +57,15 @@ func (s *VolcengineTOSStorage) Save(key string, data []byte) error {
 }
 
 func (s *VolcengineTOSStorage) Load(key string) ([]byte, error) {
-	reader, err := s.Range(context.Background(), key, nil)
+	resp, err := s.client.GetObjectV2(context.Background(), &tos.GetObjectV2Input{
+		Bucket: s.bucket,
+		Key:    key,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
-
-	return io.ReadAll(reader)
+	defer resp.Content.Close()
+	return io.ReadAll(resp.Content)
 }
 
 func (s *VolcengineTOSStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {

@@ -44,13 +44,9 @@ func (l *LocalStorage) Save(key string, data []byte) error {
 }
 
 func (l *LocalStorage) Load(key string) ([]byte, error) {
-	reader, err := l.Range(context.Background(), key, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
+	path := filepath.Join(l.root, key)
 
-	return io.ReadAll(reader)
+	return os.ReadFile(path)
 }
 
 // ctxFileReader reads from a file section through an open *os.File, checking

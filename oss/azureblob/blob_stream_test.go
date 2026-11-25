@@ -610,8 +610,40 @@ func TestAzureLoadStillWorks(t *testing.T) {
 	}
 }
 
+func TestAzureLoadResumesTruncatedBody(t *testing.T) {
+	var requests int32
+	st, _ := newTestStorage(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Header().Set("ETag", `"etag1"`)
+		switch r.Header.Get("x-ms-range") {
+		case "":
+			w.Header().Set("Content-Length", "10")
+			w.Write([]byte("012"))
+			w.(http.Flusher).Flush()
+		case "bytes=3-":
+			w.Header().Set("Content-Range", "bytes 3-9/10")
+			w.Header().Set("Content-Length", "7")
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write([]byte("3456789"))
+		default:
+			http.Error(w, "unexpected range", http.StatusBadRequest)
+		}
+	}))
+
+	data, err := st.Load("key")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if string(data) != "0123456789" {
+		t.Fatalf("got %q", data)
+	}
+	if n := atomic.LoadInt32(&requests); n != 2 {
+		t.Fatalf("expected 2 requests, got %d", n)
+	}
+}
+
 // TestAzureLoadClosesBodyOnReadError ensures a failed read still closes the
-// body through Load's deferred Close.
+// download body.
 func TestAzureLoadClosesBodyOnReadError(t *testing.T) {
 	var closed int32
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -619,15 +651,13 @@ func TestAzureLoadClosesBodyOnReadError(t *testing.T) {
 			StatusCode:    http.StatusOK,
 			Status:        "200 OK",
 			Header:        http.Header{"Content-Length": []string{"10"}},
-			Body:          failingBody{Reader: strings.NewReader(""), failAfter: 0, closed: &closed},
+			Body:          failingBody{closed: &closed},
 			ContentLength: 10,
 			Request:       r,
 		}, nil
 	})
 	st := newTrackingStorage(t, rt)
 
-	// Reads fail immediately; Load's deferred Close must release the body
-	// before returning the error.
 	_, err := st.Load("key")
 	if err == nil {
 		t.Fatal("expected Load to fail")
@@ -637,20 +667,12 @@ func TestAzureLoadClosesBodyOnReadError(t *testing.T) {
 	}
 }
 
-// failingBody errors after failAfter successful reads.
 type failingBody struct {
-	*strings.Reader
-	failAfter int
-	reads     int
-	closed    *int32
+	closed *int32
 }
 
-func (b failingBody) Read(p []byte) (int, error) {
-	b.reads++
-	if b.reads > b.failAfter {
-		return 0, fmt.Errorf("simulated read failure")
-	}
-	return b.Reader.Read(p)
+func (b failingBody) Read([]byte) (int, error) {
+	return 0, errors.New("simulated read failure")
 }
 
 func (b failingBody) Close() error {

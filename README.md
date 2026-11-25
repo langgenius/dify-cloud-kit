@@ -71,7 +71,7 @@ store, err := factory.Load("s3", oss.OSSArgs{
 `oss.OSS.Load` always buffers the entire object in memory. For large objects or
 partial reads, providers can implement the optional `oss.StreamingOSS`
 interface, which streams object content through an `io.ReadCloser` without
-buffering.
+buffering. The legacy `Load` path does not use the streaming API.
 
 ```go
 type StreamingOSS interface {
@@ -109,7 +109,7 @@ Semantics:
 | Local      | ✅             | `os.File` + `io.SectionReader`, end clamped to file size |
 | AWS S3     | ✅             | `GetObjectInput.Range`, body streamed     |
 | Aliyun OSS | ✅             | `NormalizedRange` + `RangeBehavior("standard")` |
-| Azure Blob | ✅             | `DownloadStreamOptions.Range`, `NewRetryReader` resumes interrupted reads |
+| Azure Blob | ✅             | `DownloadStreamOptions.Range`; interrupted stream reads are not resumed |
 | Google GCS | ✅             | `NewRangeReader`, 416 mapped to `ErrRangeNotSatisfiable` |
 | Tencent COS| ✅             | `ObjectGetOptions.Range`, body streamed  |
 | Huawei OBS | ❌             | Not supported: the SDK cannot express every range form and takes no per-request context; use `Load` |

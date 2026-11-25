@@ -69,13 +69,13 @@ func (s *TencentCOSStorage) Save(key string, data []byte) error {
 }
 
 func (s *TencentCOSStorage) Load(key string) ([]byte, error) {
-	reader, err := s.Range(context.Background(), key, nil)
+	resp, err := s.client.Object.Get(context.Background(), key, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer resp.Body.Close()
 
-	return io.ReadAll(reader)
+	return io.ReadAll(resp.Body)
 }
 
 func (s *TencentCOSStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {

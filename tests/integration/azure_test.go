@@ -107,8 +107,8 @@ func TestAzureIntegrationStreaming(t *testing.T) {
 // Accept-Encoding: gzip itself. A whole-object read then yields the
 // decompressed payload instead of the stored bytes, and a ranged read yields a
 // partial gzip member that fails mid-stream — even though Content-Range looked
-// valid. The library must request raw bytes and hand back exactly what the
-// service stored.
+// valid. Streaming reads must return raw stored bytes, while legacy Load
+// retains the transport's transparent decompression.
 func TestAzureIntegrationGzipContentEncoding(t *testing.T) {
 	requireIntegration(t)
 
@@ -190,9 +190,8 @@ func TestAzureIntegrationGzipContentEncoding(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if !bytes.Equal(got, stored) {
-			t.Fatalf("Load returned %d bytes (payload=%v), want %d stored bytes",
-				len(got), bytes.Equal(got, payload), len(stored))
+		if !bytes.Equal(got, payload) {
+			t.Fatalf("Load returned %d bytes, want %d decompressed bytes", len(got), len(payload))
 		}
 	})
 

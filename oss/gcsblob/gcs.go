@@ -121,13 +121,17 @@ func (g *GoogleCloudStorage) Save(key string, data []byte) error {
 }
 
 func (g *GoogleCloudStorage) Load(key string) ([]byte, error) {
-	reader, err := g.Range(context.Background(), key, nil)
+	rc, err := g.client.Bucket(g.bucket).Object(key).NewReader(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer rc.Close()
 
-	return io.ReadAll(reader)
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {

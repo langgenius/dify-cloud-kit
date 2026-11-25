@@ -104,13 +104,19 @@ func (s *AliyunOSSStorage) Save(key string, data []byte) error {
 }
 
 func (s *AliyunOSSStorage) Load(key string) ([]byte, error) {
-	reader, err := s.Range(context.Background(), key, nil)
+	fullPath := s.fullPath(key)
+	object, err := s.bucket.GetObject(fullPath)
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	// Ensure object is closed after reading
+	defer object.Close()
 
-	return io.ReadAll(reader)
+	data, err := io.ReadAll(object)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (s *AliyunOSSStorage) Range(ctx context.Context, key string, byteRange *difyoss.ByteRange) (io.ReadCloser, error) {
