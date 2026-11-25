@@ -373,95 +373,66 @@ func gzipFixture(t *testing.T, served []byte) []byte {
 	return stored.Bytes()
 }
 
-// TestGCSRangeTranscoded pins the server-side decompressive-transcoding shape:
-// a gzip-stored object whose response is decompressed, chunked, and carries
-// neither Content-Encoding nor Content-Length. The stored and served sizes
-// differ and Range is ignored, so only a whole-object request can be served.
-func TestGCSRangeTranscoded(t *testing.T) {
+func TestGCSRangeRejectsTranscodedResponse(t *testing.T) {
 	served := bytes.Repeat([]byte("dify"), 1024)
 	stored := gzipFixture(t, served)
 	st, _ := newTestStorage(t, &transcodingHandler{stored: stored, served: served})
 
-	for _, r := range []oss.ByteRange{
-		{Offset: 0, Length: 5},
-		{Offset: 0, Length: 1},
-		{Offset: 2, Length: 4},
-		{Offset: 2, Length: -1},
-	} {
-		rc, err := st.Range(context.Background(), "key", &r)
+	for _, r := range []*oss.ByteRange{nil, {Offset: 0, Length: -1}, {Offset: 2, Length: 4}} {
+		rc, err := st.Range(context.Background(), "key", r)
 		if rc != nil {
 			rc.Close()
 		}
-		if err == nil {
-			t.Fatalf("range=%+v: expected error for a transcoded response", r)
+		if rc != nil || err == nil || !strings.Contains(err.Error(), "despite requesting stored bytes") {
+			t.Fatalf("Range(%+v): expected transcoding error and no reader, got %v", r, err)
 		}
-	}
-
-	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
-	if err != nil {
-		t.Fatalf("whole-object Range: %v", err)
-	}
-	defer rc.Close()
-
-	reader, ok := rc.(*storage.Reader)
-	if !ok {
-		t.Fatalf("Range returned %T, want *storage.Reader", rc)
-	}
-	if !reader.Attrs.Decompressed {
-		t.Fatal("SDK did not report the response as decompressed; fixture is not faithful")
-	}
-	if reader.Attrs.Size != -1 || reader.Remain() != -1 {
-		t.Fatalf("Attrs.Size = %d, Remain() = %d; want -1 without Content-Length", reader.Attrs.Size, reader.Remain())
-	}
-
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("ReadAll: %v", err)
-	}
-	if !bytes.Equal(data, served) {
-		t.Fatalf("read %d bytes, want %d", len(data), len(served))
 	}
 }
 
-// TestGCSRangeTransportDecompressed covers the other path to an unknown
-// length. The HTTP transport only asks for gzip when the request carries no
-// Range header, so whole-object reads of a gzip-stored object are decompressed
-// by the transport itself; a response that had a Content-Length on the wire
-// still reaches the provider with Remain() == -1.
-func TestGCSRangeTransportDecompressed(t *testing.T) {
+func TestGCSRangeReturnsStoredGzipBytes(t *testing.T) {
 	served := bytes.Repeat([]byte("dify"), 1024)
 	stored := gzipFixture(t, served)
+	object := &objectHandler{body: stored}
 	st, _ := newTestStorage(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
+		if r.Header.Get("Accept-Encoding") != "gzip" {
+			http.Error(w, "expected Accept-Encoding: gzip", http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Content-Length", fmt.Sprint(len(stored)))
-		w.WriteHeader(http.StatusOK)
-		w.Write(stored)
+		object.ServeHTTP(w, r)
 	}))
 
-	rc, err := st.Range(context.Background(), "key", &oss.ByteRange{Offset: 0, Length: -1})
-	if err != nil {
-		t.Fatalf("whole-object Range: %v", err)
+	for _, tc := range []struct {
+		name string
+		r    *oss.ByteRange
+		want []byte
+	}{
+		{"full stream", nil, stored},
+		{"zero to EOF", &oss.ByteRange{Offset: 0, Length: -1}, stored},
+		{"bounded range", &oss.ByteRange{Offset: 2, Length: 4}, stored[2:6]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, err := st.Range(context.Background(), "key", tc.r)
+			if err != nil {
+				t.Fatalf("Range: %v", err)
+			}
+			defer rc.Close()
+			got, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if !bytes.Equal(got, tc.want) {
+				t.Fatalf("got %x, want %x", got, tc.want)
+			}
+		})
 	}
-	defer rc.Close()
 
-	reader, ok := rc.(*storage.Reader)
-	if !ok {
-		t.Fatalf("Range returned %T, want *storage.Reader", rc)
-	}
-	if !reader.Attrs.Decompressed {
-		t.Fatal("SDK did not report the response as decompressed; transport did not negotiate gzip")
-	}
-	if reader.Remain() != -1 {
-		t.Fatalf("Remain() = %d, want -1 after transport decompression", reader.Remain())
-	}
-
-	data, err := io.ReadAll(rc)
+	got, err := st.Load("key")
 	if err != nil {
-		t.Fatalf("ReadAll: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
-	if !bytes.Equal(data, served) {
-		t.Fatalf("read %d bytes, want %d", len(data), len(served))
+	if !bytes.Equal(got, served) {
+		t.Fatalf("Load returned %d bytes, want %d decompressed bytes", len(got), len(served))
 	}
 }
 

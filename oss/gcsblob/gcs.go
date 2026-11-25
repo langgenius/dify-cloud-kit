@@ -144,7 +144,8 @@ func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *o
 		return nil, err
 	}
 
-	obj := g.client.Bucket(g.bucket).Object(key)
+	// Keep streamed bytes and offsets in the same representation as State().Size.
+	obj := g.client.Bucket(g.bucket).Object(key).ReadCompressed(true)
 
 	offset, length := int64(0), int64(-1)
 	if byteRange != nil {
@@ -161,6 +162,11 @@ func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *o
 			return nil, oss.ErrRangeNotSatisfiable
 		}
 		return nil, err
+	}
+
+	if rc.Attrs.Decompressed {
+		rc.Close()
+		return nil, fmt.Errorf("GCS decompressed object %q despite requesting stored bytes", key)
 	}
 
 	if byteRange != nil {

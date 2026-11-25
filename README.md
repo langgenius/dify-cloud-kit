@@ -110,7 +110,7 @@ Semantics:
 | AWS S3     | ✅             | `GetObjectInput.Range`, body streamed     |
 | Aliyun OSS | ✅             | `NormalizedRange` + `RangeBehavior("standard")` |
 | Azure Blob | ✅             | `DownloadStreamOptions.Range`; interrupted stream reads are not resumed |
-| Google GCS | ✅             | `NewRangeReader`, 416 mapped to `ErrRangeNotSatisfiable` |
+| Google GCS | ✅             | `NewRangeReader` on stored bytes (no automatic gzip decompression) |
 | Tencent COS| ✅             | `ObjectGetOptions.Range`, body streamed  |
 | Huawei OBS | ❌             | Not supported: the SDK cannot express every range form and takes no per-request context; use `Load` |
 | Volcengine TOS| ✅          | `GetObjectV2Input.Range`, body streamed |

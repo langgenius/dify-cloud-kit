@@ -1,6 +1,8 @@
 package azureblob
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -83,6 +85,55 @@ func (h *objectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprint(len(part)))
 	w.WriteHeader(http.StatusPartialContent)
 	w.Write(part)
+}
+
+func TestAzureRangeReturnsStoredGzipBytes(t *testing.T) {
+	payload := bytes.Repeat([]byte("dify-cloud-kit gzip fixture"), 128)
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write(payload); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	stored := compressed.Bytes()
+	object := &objectHandler{body: stored}
+	st, _ := newTestStorage(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		object.ServeHTTP(w, r)
+	}))
+	for _, tc := range []struct {
+		name string
+		r    *oss.ByteRange
+		want []byte
+	}{
+		{"full stream", nil, stored},
+		{"bounded range", &oss.ByteRange{Offset: 2, Length: 4}, stored[2:6]},
+		{"tail to EOF", &oss.ByteRange{Offset: int64(len(stored) - 8), Length: -1}, stored[len(stored)-8:]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, err := st.Range(context.Background(), "key", tc.r)
+			if err != nil {
+				t.Fatalf("Range: %v", err)
+			}
+			defer rc.Close()
+			got, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if !bytes.Equal(got, tc.want) {
+				t.Fatalf("got %x, want %x", got, tc.want)
+			}
+		})
+	}
+	got, err := st.Load("key")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("Load returned %d bytes, want %d decompressed bytes", len(got), len(payload))
+	}
 }
 
 func TestAzureRangeFull(t *testing.T) {
