@@ -297,11 +297,11 @@ func (s *S3Storage) Type() string {
 	return oss.OSS_TYPE_S3
 }
 
-// Prepare creates the configured bucket if it does not exist. It is
-// idempotent: an already-existing bucket is a success, and every other error
-// is returned to the caller. It is never called implicitly. (The legacy
-// constructor additionally ensures the bucket at load time; Prepare is the
-// explicit capability for callers that want to control this.)
+// Prepare creates the configured bucket when HeadBucket reports it missing.
+// A successful initial HeadBucket confirms access, not ownership. If creation
+// races with another caller, only BucketAlreadyOwnedByYou is treated as success.
+// Prepare is never called implicitly; the legacy constructor has its own bucket
+// check at load time.
 func (s *S3Storage) Prepare(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -321,19 +321,9 @@ func (s *S3Storage) Prepare(ctx context.Context) error {
 	if err == nil {
 		return nil
 	}
-	var createErr smithy.APIError
-	if errors.As(err, &createErr) {
-		switch createErr.ErrorCode() {
-		case "BucketAlreadyOwnedByYou":
-			return nil
-		case "BucketAlreadyExists":
-			if _, headErr := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
-				Bucket: aws.String(s.bucket),
-			}); headErr == nil {
-				return nil
-			}
-			return fmt.Errorf("failed to prepare bucket %q: name is taken and the bucket is not accessible: %w", s.bucket, err)
-		}
+	var alreadyOwned *types.BucketAlreadyOwnedByYou
+	if errors.As(err, &alreadyOwned) {
+		return nil
 	}
 	return fmt.Errorf("failed to prepare bucket %q: %w", s.bucket, err)
 }

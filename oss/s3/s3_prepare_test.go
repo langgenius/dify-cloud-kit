@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/aws/smithy-go"
 )
 
 // bucketHandler simulates S3 bucket-level operations: HEAD /bucket returns
@@ -94,13 +96,16 @@ func TestS3PrepareCreateRaceTolerated(t *testing.T) {
 	}
 }
 
-func TestS3PrepareBucketOwnedByOtherFails(t *testing.T) {
+func TestS3PrepareRejectsBucketAlreadyExistsEvenIfAccessible(t *testing.T) {
 	var heads, creates int32
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodHead:
-			atomic.AddInt32(&heads, 1)
-			w.WriteHeader(http.StatusNotFound)
+			if atomic.AddInt32(&heads, 1) == 1 {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
 		case http.MethodPut:
 			atomic.AddInt32(&creates, 1)
 			w.WriteHeader(http.StatusConflict)
@@ -111,35 +116,13 @@ func TestS3PrepareBucketOwnedByOtherFails(t *testing.T) {
 	})
 	st, _ := newTestStorage(t, handler)
 
-	if err := st.Prepare(context.Background()); err == nil {
-		t.Fatal("expected error when the bucket name is owned by another account")
+	err := st.Prepare(context.Background())
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "BucketAlreadyExists" {
+		t.Fatalf("expected a wrapped BucketAlreadyExists error, got %v", err)
 	}
-	if heads != 2 || creates != 1 {
-		t.Fatalf("expected 2 HEADs and 1 create, got %d HEADs and %d creates", heads, creates)
-	}
-}
-
-func TestS3PrepareBucketAlreadyExistsAccessibleTolerated(t *testing.T) {
-	var heads int32
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodHead:
-			if atomic.AddInt32(&heads, 1) == 1 {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-		case http.MethodPut:
-			w.WriteHeader(http.StatusConflict)
-			fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>BucketAlreadyExists</Code><Message>exists</Message></Error>`)
-		default:
-			w.WriteHeader(http.StatusBadRequest)
-		}
-	})
-	st, _ := newTestStorage(t, handler)
-
-	if err := st.Prepare(context.Background()); err != nil {
-		t.Fatalf("Prepare with accessible BucketAlreadyExists: %v", err)
+	if h, c := atomic.LoadInt32(&heads), atomic.LoadInt32(&creates); h != 1 || c != 1 {
+		t.Fatalf("expected 1 HEAD and 1 create, got %d HEADs and %d creates", h, c)
 	}
 }
 

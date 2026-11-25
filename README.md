@@ -244,12 +244,12 @@ if errors.Is(err, oss.ErrPrepareNotSupported) {
   the bucket only when it does not exist. A 409 Conflict on create is a
   success only if the bucket is then accessible; a name owned by another
   project is an error.
-- **AWS S3** — `NotFound` / `NoSuchBucket` on the bucket probe triggers
-  creation, with `LocationConstraint` set from the region outside
-  `us-east-1` (AWS only; S3-compatible endpoints keep their default).
-  `BucketAlreadyOwnedByYou` is a success; `BucketAlreadyExists` is a success
-  only if the bucket is then accessible, otherwise the name belongs to
-  another account and an error is returned. (The legacy constructor still
+- **AWS S3** — a successful initial `HeadBucket` confirms access, not ownership.
+  `NotFound` / `NoSuchBucket` on the probe triggers creation, with
+  `LocationConstraint` set from the region outside `us-east-1` (AWS only;
+  S3-compatible endpoints keep their default). `BucketAlreadyOwnedByYou`
+  is a success on create; `BucketAlreadyExists` is always returned as an
+  error, even if the bucket is accessible. (The legacy constructor still
   ensures the bucket at load time.)
 
 Every other error — 403, other 409 codes, 5xx, network, cancellation — is
