@@ -3,6 +3,7 @@ package tencentcos
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -72,8 +73,45 @@ func (s *TencentCOSStorage) Load(key string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
 	return io.ReadAll(resp.Body)
+}
+
+func (s *TencentCOSStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+	headers := make(http.Header)
+	headers.Set("Accept-Encoding", "identity")
+	opt := &cos.ObjectGetOptions{XOptionHeader: &headers}
+	if byteRange != nil {
+		rangeHeader, err := byteRange.HTTPRange()
+		if err != nil {
+			return nil, err
+		}
+		opt.Range = rangeHeader
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.Object.Get(ctx, key, opt)
+	if err != nil {
+		var apiErr *cos.ErrorResponse
+		if errors.As(err, &apiErr) && apiErr.Response != nil &&
+			apiErr.Response.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			return nil, oss.ErrRangeNotSatisfiable
+		}
+		return nil, err
+	}
+
+	if byteRange != nil {
+		contentRange := resp.Header.Get("Content-Range")
+		if err := oss.VerifyContentRange(contentRange, byteRange); err != nil {
+			resp.Body.Close()
+			return nil, err
+		}
+	}
+
+	return resp.Body, nil
 }
 
 func (s *TencentCOSStorage) Exists(key string) (bool, error) {

@@ -1,21 +1,26 @@
 package gcsblob
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"cloud.google.com/go/storage"
 	"github.com/langgenius/dify-cloud-kit/oss"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
 type GoogleCloudStorage struct {
-	bucket string
-	client *storage.Client
+	bucket  string
+	project string
+	client  *storage.Client
 }
 
 func NewGoogleCloudStorage(args oss.OSSArgs) (oss.OSS, error) {
@@ -47,9 +52,62 @@ func NewGoogleCloudStorage(args oss.OSSArgs) (oss.OSS, error) {
 		}
 	}
 	return &GoogleCloudStorage{
-		bucket: bucket,
-		client: client,
+		bucket:  bucket,
+		project: args.GoogleCloudStorage.Project,
+		client:  client,
 	}, nil
+}
+
+// Prepare creates the configured bucket if it does not exist. It is
+// idempotent: an existing bucket that this client can access is a success,
+// a 409 Conflict for a bucket owned by someone else is an error, and every
+// other error is returned to the caller. It is never called implicitly.
+func (g *GoogleCloudStorage) Prepare(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if g.project == "" {
+		return fmt.Errorf("gcs: cannot prepare bucket %q without a project ID (set GoogleCloudStorage.Project)", g.bucket)
+	}
+	err := g.checkBucketAccess(ctx)
+	if err == nil {
+		return nil
+	}
+	if !isBucketNotFound(err) {
+		return fmt.Errorf("failed to prepare bucket %q: %w", g.bucket, err)
+	}
+	err = g.client.Bucket(g.bucket).Create(ctx, g.project, nil)
+	if err == nil {
+		return nil
+	}
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict {
+		if g.checkBucketAccess(ctx) == nil {
+			return nil
+		}
+		return fmt.Errorf("failed to prepare bucket %q: name is taken and the bucket is not accessible: %w", g.bucket, err)
+	}
+	return fmt.Errorf("failed to prepare bucket %q: %w", g.bucket, err)
+}
+
+// checkBucketAccess lists at most one object, which needs only
+// storage.objects.list rather than storage.buckets.get.
+func (g *GoogleCloudStorage) checkBucketAccess(ctx context.Context) error {
+	it := g.client.Bucket(g.bucket).Objects(ctx, nil)
+	it.PageInfo().MaxSize = 1
+	_, err := it.Next()
+	if errors.Is(err, iterator.Done) {
+		return nil
+	}
+	return err
+}
+
+func isBucketNotFound(err error) bool {
+	if errors.Is(err, storage.ErrBucketNotExist) {
+		return true
+	}
+	var apiErr *googleapi.Error
+	return errors.As(err, &apiErr) && apiErr.Code == http.StatusNotFound
 }
 
 func (g *GoogleCloudStorage) Save(key string, data []byte) error {
@@ -75,6 +133,136 @@ func (g *GoogleCloudStorage) Load(key string) ([]byte, error) {
 		return nil, err
 	}
 	return data, nil
+}
+
+func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+	if byteRange != nil {
+		if _, err := byteRange.HTTPRange(); err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// Keep streamed bytes and offsets in the same representation as State().Size.
+	obj := g.client.Bucket(g.bucket).Object(key).ReadCompressed(true)
+
+	offset, length := int64(0), int64(-1)
+	if byteRange != nil {
+		offset, length = byteRange.Offset, byteRange.Length
+	}
+
+	// NewRangeReader reads at most length bytes starting at offset; a
+	// negative length reads to the end of the object. Offsets beyond the
+	// end of the object fail with a 416 error.
+	rc, err := obj.NewRangeReader(ctx, offset, length)
+	if err != nil {
+		var apiErr *googleapi.Error
+		if errors.As(err, &apiErr) && apiErr.Code == http.StatusRequestedRangeNotSatisfiable {
+			return nil, oss.ErrRangeNotSatisfiable
+		}
+		return nil, err
+	}
+
+	if rc.Attrs.Decompressed {
+		rc.Close()
+		return nil, fmt.Errorf("GCS decompressed object %q despite requesting stored bytes", key)
+	}
+
+	if byteRange != nil {
+		// An empty object cannot satisfy any range request. Most servers
+		// answer 416, but some (e.g. fake-gcs-server) return 200 with an
+		// empty body for open-ended ranges; reject it either way.
+		if rc.Attrs.Size == 0 {
+			rc.Close()
+			return nil, oss.ErrRangeNotSatisfiable
+		}
+		// Verify the server honored the range instead of streaming the whole
+		// object. Remain is -1 without Content-Length; Attrs.Size still tells a
+		// parsed 206 (total from Content-Range) from a bare 200.
+		start, size, remain := rc.Attrs.StartOffset, rc.Attrs.Size, rc.Remain()
+		switch {
+		case remain >= 0:
+			// Content-Length present: verify the full reconstructed range.
+			contentRange := fmt.Sprintf("bytes %d-%d/%d", start, start+remain-1, size)
+			if err := oss.VerifyContentRange(contentRange, byteRange); err != nil {
+				rc.Close()
+				return nil, err
+			}
+		case size >= 0:
+			// The SDK exposes the start and total, but not the end. Validate
+			// the byte count as the chunked body is read.
+			if start != byteRange.Offset {
+				rc.Close()
+				return nil, fmt.Errorf("server did not honor requested range %v: Content-Range starts at %d", *byteRange, start)
+			}
+			if start >= size {
+				rc.Close()
+				return nil, oss.ErrRangeNotSatisfiable
+			}
+			expected := size - start
+			if length > 0 {
+				expected = min(expected, length)
+			}
+			return &exactRangeReader{ReadCloser: rc, remaining: expected}, nil
+		case byteRange.Offset != 0 || byteRange.Length != -1:
+			// 200 without Content-Length: range ignored, only whole-object reads are safe.
+			rc.Close()
+			return nil, fmt.Errorf("server did not honor requested range %v: response has neither Content-Range nor Content-Length", *byteRange)
+		default:
+			// A zero-to-EOF range still needs a first byte when the size is unknown.
+			buffered := bufio.NewReader(rc)
+			if _, err := buffered.Peek(1); err != nil {
+				rc.Close()
+				if errors.Is(err, io.EOF) {
+					return nil, oss.ErrRangeNotSatisfiable
+				}
+				return nil, err
+			}
+			return struct {
+				io.Reader
+				io.Closer
+			}{buffered, rc}, nil
+		}
+	}
+
+	return rc, nil
+}
+
+// exactRangeReader checks the length at EOF without exposing bytes beyond the range.
+type exactRangeReader struct {
+	io.ReadCloser
+	remaining int64
+	terminal  error
+}
+
+func (r *exactRangeReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.terminal != nil {
+		return 0, r.terminal
+	}
+	if r.remaining == 0 {
+		var extra [1]byte
+		n, err := r.ReadCloser.Read(extra[:])
+		if n > 0 {
+			err = errors.New("GCS range response has more bytes than expected")
+		}
+		r.terminal = err
+		return 0, err
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.ReadCloser.Read(p)
+	r.remaining -= int64(n)
+	if err == io.EOF && r.remaining > 0 {
+		err = fmt.Errorf("GCS range response ended %d bytes early: %w", r.remaining, io.ErrUnexpectedEOF)
+	}
+	r.terminal = err
+	return n, err
 }
 
 func (g *GoogleCloudStorage) Exists(key string) (bool, error) {

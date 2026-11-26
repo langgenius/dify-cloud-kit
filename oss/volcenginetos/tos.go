@@ -3,9 +3,11 @@ package volcenginetos
 import (
 	"bytes"
 	"context"
+	"errors"
 	"github.com/langgenius/dify-cloud-kit/oss"
 	"github.com/volcengine/ve-tos-golang-sdk/v2/tos"
 	"io"
+	"net/http"
 	"strings"
 )
 
@@ -62,7 +64,43 @@ func (s *VolcengineTOSStorage) Load(key string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Content.Close()
 	return io.ReadAll(resp.Content)
+}
+
+func (s *VolcengineTOSStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
+	input := &tos.GetObjectV2Input{
+		Bucket: s.bucket,
+		Key:    key,
+	}
+	if byteRange != nil {
+		rangeHeader, err := byteRange.HTTPRange()
+		if err != nil {
+			return nil, err
+		}
+		input.Range = rangeHeader
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.GetObjectV2(ctx, input)
+	if err != nil {
+		var apiErr *tos.TosServerError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			return nil, oss.ErrRangeNotSatisfiable
+		}
+		return nil, err
+	}
+
+	if byteRange != nil {
+		if err := oss.VerifyContentRange(resp.ContentRange, byteRange); err != nil {
+			resp.Content.Close()
+			return nil, err
+		}
+	}
+
+	return resp.Content, nil
 }
 
 func (s *VolcengineTOSStorage) Exists(key string) (bool, error) {
