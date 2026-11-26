@@ -120,7 +120,7 @@ func (s *AliyunOSSStorage) Load(key string) ([]byte, error) {
 }
 
 func (s *AliyunOSSStorage) Range(ctx context.Context, key string, byteRange *difyoss.ByteRange) (io.ReadCloser, error) {
-	options := []oss.Option{oss.WithContext(ctx)}
+	options := []oss.Option{oss.WithContext(ctx), oss.AcceptEncoding("identity")}
 	if byteRange != nil {
 		rangeHeader, err := byteRange.HTTPRange()
 		if err != nil {

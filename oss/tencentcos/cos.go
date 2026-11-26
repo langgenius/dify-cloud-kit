@@ -79,7 +79,9 @@ func (s *TencentCOSStorage) Load(key string) ([]byte, error) {
 }
 
 func (s *TencentCOSStorage) Range(ctx context.Context, key string, byteRange *oss.ByteRange) (io.ReadCloser, error) {
-	opt := &cos.ObjectGetOptions{}
+	headers := make(http.Header)
+	headers.Set("Accept-Encoding", "identity")
+	opt := &cos.ObjectGetOptions{XOptionHeader: &headers}
 	if byteRange != nil {
 		rangeHeader, err := byteRange.HTTPRange()
 		if err != nil {

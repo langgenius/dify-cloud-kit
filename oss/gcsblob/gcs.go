@@ -1,6 +1,7 @@
 package gcsblob
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -209,6 +210,20 @@ func (g *GoogleCloudStorage) Range(ctx context.Context, key string, byteRange *o
 			// 200 without Content-Length: range ignored, only whole-object reads are safe.
 			rc.Close()
 			return nil, fmt.Errorf("server did not honor requested range %v: response has neither Content-Range nor Content-Length", *byteRange)
+		default:
+			// A zero-to-EOF range still needs a first byte when the size is unknown.
+			buffered := bufio.NewReader(rc)
+			if _, err := buffered.Peek(1); err != nil {
+				rc.Close()
+				if errors.Is(err, io.EOF) {
+					return nil, oss.ErrRangeNotSatisfiable
+				}
+				return nil, err
+			}
+			return struct {
+				io.Reader
+				io.Closer
+			}{buffered, rc}, nil
 		}
 	}
 
